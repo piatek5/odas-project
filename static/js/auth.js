@@ -110,7 +110,16 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
             ["deriveKey", "deriveBits"]
         );
 
+        // Zapisywanie sesji
+        window.sessionStorage.setItem('isLoggedIn', 'true');
+        window.sessionStorage.setItem('currentUserId', userData.id);
+        // Zapisywanie zaszyfrowanego klucza i soli, aby móc je odzyskać na /send
+        window.sessionStorage.setItem('wrappedKeyX', userData.wrapped_priv_key_x25519);
+        window.sessionStorage.setItem('userSalt', userData.kdf_salt);
+
+        window.myPrivateKeyX = privateKeyX; 
         console.log("Sukces! Klucz prywatny odzyskany.");
+
         if (status) status.innerHTML = "<b style='color:green'>Zalogowano!</b>";
         window.sessionStorage.setItem('isLoggedIn', 'true');
         
@@ -119,3 +128,68 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
         console.error(err);
     }
 });
+
+async function sendMessage(recipientUsername, plainTextContent) {
+    let privateKey = window.myPrivateKeyX;
+
+    // --- ODZYSKIWANIE TOŻSAMOŚCI NADAWCY ---
+    if (!privateKey) {
+        const wrappedKeyBase64 = window.sessionStorage.getItem('wrappedKeyX');
+        const saltBase64 = window.sessionStorage.getItem('userSalt');
+
+        if (!wrappedKeyBase64) throw new Error("Brak danych sesji. Zaloguj się ponownie.");
+
+        const password = prompt("Sesja wygasła. Wpisz hasło, aby odblokować klucze:");
+        const masterKey = await cryptoLib.deriveMasterKey(password, base64ToArrayBuffer(saltBase64));
+
+        privateKey = await window.crypto.subtle.unwrapKey(
+            "pkcs8",
+            base64ToArrayBuffer(wrappedKeyBase64),
+            masterKey,
+            { name: "AES-GCM", iv: new Uint8Array(12) },
+            { name: "X25519" },
+            true,
+            ["deriveKey", "deriveBits"]
+        );
+        window.myPrivateKeyX = privateKey;
+    }
+
+    // POBIERANIE DANYCH ODBIORCY (ID I KLUCZ) ---
+    const response = await fetch(`/api/get-public-key/${recipientUsername}`);
+    if (!response.ok) throw new Error("Nie znaleziono odbiorcy.");
+    
+    const recipientData = await response.json(); // Pobieramy {id, pub_key_x25519, ...}
+    const recipientPubKeyRaw = base64ToArrayBuffer(recipientData.pub_key_x25519);
+
+    // --- KRYPTOGRAFIA (ECDH + AES-GCM) ---
+    // Negocjacja wspólnego sekretu
+    const sharedKey = await messageCrypto.deriveSharedSecret(privateKey, recipientPubKeyRaw);
+
+    // Szyfrowanie treści
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        sharedKey,
+        new TextEncoder().encode(plainTextContent)
+    );
+
+    // --- BUDOWANIE PAYLOADU I WYSYŁKA ---
+    const messagePayload = {
+        sender_id: parseInt(window.sessionStorage.getItem('currentUserId')), // Pobranie z sesji
+        receiver_id: recipientData.id,
+        encrypted_payload: arrayBufferToBase64(encryptedBuffer),
+        iv: arrayBufferToBase64(iv),
+        signature: "podpis_placeholder"
+    };
+
+    console.log("Wysyłam payload:", messagePayload);
+
+    const sendRes = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(messagePayload)
+    });
+
+    if (!sendRes.ok) throw new Error("Błąd zapisu wiadomości na serwerze.");
+    return await sendRes.json();
+}

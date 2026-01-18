@@ -31,5 +31,7 @@ class Message(db.Model):
     # Podpis cyfrowy (Ed25519) 
     signature = db.Column(db.Text, nullable=False)
     
-    # Zaszyfrowany klucz sesji dla odbiorcy
-    encrypted_session_key = db.Column(db.Text, nullable=False)
+    # Wektor inicjalizujący dla AES
+    iv = db.Column(db.Text, nullable=False)
+
+    timestamp = db.Column(db.DateTime, server_default=db.func.now())

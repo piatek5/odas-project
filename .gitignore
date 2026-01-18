@@ -3,3 +3,4 @@
 !.pixi/config.toml
 src/app/__pycache__/*
 .env
+__pycache__/*

@@ -1,4 +1,5 @@
 const cryptoLib = {
+    
     // Wyprowadzanie klucza AES z hasła
     async deriveMasterKey(password, salt) {
         const encoder = new TextEncoder();
@@ -29,5 +30,23 @@ const cryptoLib = {
     // Pomocnicza funkcja do konwersji ArrayBuffer na Base64
     arrayBufferToBase64(buffer) {
         return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    }
+};
+
+const messageCrypto = {
+
+    // Uzgadnianie klucza sesji przy użyciu X25519 (ECDH) 
+    async deriveSharedSecret(privateKeyX, publicKeyX_Raw) {
+        const importedPubKey = await window.crypto.subtle.importKey(
+            "raw", publicKeyX_Raw, { name: "X25519" }, true, []
+        );
+
+        return window.crypto.subtle.deriveKey(
+            { name: "X25519", public: importedPubKey },
+            privateKeyX,
+            { name: "AES-GCM", length: 256 },
+            true,
+            ["encrypt", "decrypt"]
+        );
     }
 };

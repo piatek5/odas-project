@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Wyślij Wiadomość - ODAS</title>
+</head>
+<body>
+    <h1>Nowa bezpieczna wiadomość</h1>
+    <div id="status"></div>
+    
+    <form id="sendForm">
+        <input type="text" id="recipient" placeholder="Odbiorca (np. jan)" required><br><br>
+        <textarea id="messageContent" placeholder="Twoja tajna wiadomość..." rows="5" cols="40" required></textarea><br><br>
+        <button type="submit">Szyfruj i wyślij</button>
+    </form>
+
+    <hr>
+    <a href="/login">Powrót do logowania</a>
+
+    <script src="{{ url_for('static', filename='js/crypto.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+    <script>
+        // Logika specyficzna dla strony wysyłania
+        document.getElementById('sendForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const recipient = document.getElementById('recipient').value;
+            const content = document.getElementById('messageContent').value;
+            const status = document.getElementById('status');
+
+            // 1. Sprawdź, czy mamy klucz prywatny w pamięci sesji
+            // W profesjonalnej wersji trzymalibyśmy obiekt CryptoKey w zmiennej globalnej, 
+            // ale na potrzeby testu sprawdzimy status logowania.
+            if (!window.sessionStorage.getItem('isLoggedIn')) {
+                status.innerHTML = "<b style='color:red'>Błąd: Musisz być zalogowany, aby wysłać wiadomość!</b>";
+                return;
+            }
+
+            status.innerText = "Szyfrowanie wiadomości...";
+
+            try {
+                // Ta funkcja zajmie się resztą (dodamy ją za chwilę do auth.js)
+                await sendMessage(recipient, content);
+                status.innerHTML = "<b style='color:green'>Wiadomość wysłana pomyślnie!</b>";
+                document.getElementById('messageContent').value = "";
+            } catch (err) {
+                status.innerHTML = `<b style='color:red'>Błąd: ${err.message}</b>`;
+                console.error(err);
+            }
+        });
+    </script>
+</body>
+</html>
