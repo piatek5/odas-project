@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rejestracja</title>
+</head>
+<body>
+    <h2>Utwórz bezpieczne konto</h2>
+    <form id="registerForm">
+        <input type="text" id="username" placeholder="Login" required><br>
+        <input type="password" id="password" placeholder="Hasło" required><br>
+        <button type="submit">Zarejestruj się</button>
+    </form>
+
+    <div id="status"></div>
+
+    <script src="{{ url_for('static', filename='js/crypto.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+</body>
+</html>
