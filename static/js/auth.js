@@ -16,6 +16,13 @@ function base64ToArrayBuffer(base64) {
     return bytes.buffer;
 }
 
+const fileToBase64 = file => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+});
+
 // --- REJESTRACJA ---
 
 async function registerUser(username, password) {
@@ -131,7 +138,7 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     }
 });
 
-async function sendMessage(recipientUsername, plainTextContent) {
+async function sendMessage(recipientUsername, plainTextContent, fileList) {
     let privateKey = window.myPrivateKeyX;
 
     // --- ODZYSKIWANIE TOŻSAMOŚCI NADAWCY ---
@@ -167,12 +174,42 @@ async function sendMessage(recipientUsername, plainTextContent) {
     // Negocjacja wspólnego sekretu
     const sharedKey = await messageCrypto.deriveSharedSecret(privateKey, recipientPubKeyRaw);
 
-    // Szyfrowanie treści
+    // --- PRZYGOTOWANIE ZAŁĄCZNIKÓW ---
+    const attachments = [];
+    if (fileList && fileList.length > 0) {
+        // Dodatkowe zabezpieczenie wewnątrz funkcji
+        if (fileList.length > 5) throw new Error("Zbyt duża liczba plików.");
+
+        for (let i = 0; i < fileList.length; i++) {
+            const file = fileList[i];
+            
+            // Jeśli plik jest duży, informujemy o tym w konsoli
+            console.log(`Przetwarzanie pliku: ${file.name} (${file.size} bajtów)`);
+            
+            const base64Data = await fileToBase64(file);
+            attachments.push({
+                name: file.name,
+                type: file.type,
+                data: base64Data
+            });
+        }
+    }
+
+    // --- TWORZENIE INTEGRALNEGO PAKIETU ---
+    const fullMessageObject = {
+        text: plainTextContent,
+        attachments: attachments
+    };
+    const jsonToEncrypt = JSON.stringify(fullMessageObject);
+    const encodedData = new TextEncoder().encode(jsonToEncrypt);
+
+    // --- SZYFROWANIE CAŁOŚCI (AES-GCM) ---
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    
     const encryptedBuffer = await window.crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
         sharedKey,
-        new TextEncoder().encode(plainTextContent)
+        encodedData
     );
 
     // --- PODPISYWANIE ED25519 ---

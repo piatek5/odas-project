@@ -43,14 +43,16 @@
                 
                 for (const msg of messages) {
                     try {
-                        const decryptedText = await decryptIncomingMessage(msg);
+                        const decryptedData = await decryptIncomingMessage(msg);
                         
                         const card = document.createElement('div');
                         card.className = 'message-card';
                         card.innerHTML = `
                             <div class="sender">Od: ${msg.sender_username}</div>
-                            <div class="time">${msg.timestamp}</div>
-                            <p class="content">${decryptedText}</p>
+                            <p>${decryptedData.text}</p>
+                            <div class="files">
+                                ${decryptedData.attachments.map(f => `<a href="${f.data}" download="${f.name}">Pobierz ${f.name}</a>`).join('<br>')}
+                            </div>
                         `;
                         list.appendChild(card);
                     } catch (e) {
@@ -111,7 +113,11 @@
                 base64ToArrayBuffer(msg.encrypted_payload)
             );
 
-            return new TextDecoder().decode(decryptedBuffer);
+            const decryptedJson = new TextDecoder().decode(decryptedBuffer);
+            const messageData = JSON.parse(decryptedJson);
+
+            // Zwracamy obiekt zamiast stringa
+            return messageData;
         }
 
         window.onload = loadInbox;
