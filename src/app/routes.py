@@ -88,17 +88,18 @@ def init_routes(app):
     @app.route('/api/messages/inbox/<int:user_id>')
     def get_inbox(user_id):
         # Pobranie wiadomości, gdzie użytkownik jest odbiorcą
-        # Dołenie danych nadawcy (username i klucz publiczny), aby ułatwić deszyfrację
-        messages = db.session.query(Message, User.username, User.pub_key_x25519).join(
+        messages = db.session.query(Message, User.username, User.pub_key_x25519, User.pub_key_ed25519).join(
             User, Message.sender_id == User.id
         ).filter(Message.receiver_id == user_id).all()
 
         inbox_data = []
-        for msg, sender_name, sender_key in messages:
+        for msg, sender_name, sender_key_x, sender_key_ed in messages:
             inbox_data.append({
                 "sender_username": sender_name,
-                "sender_pub_key": sender_key,
+                "sender_pub_key": sender_key_x,
+                "sender_pub_key_ed25519": sender_key_ed,
                 "encrypted_payload": msg.encrypted_payload,
+                "signature": msg.signature,
                 "iv": msg.iv,
                 "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
             })

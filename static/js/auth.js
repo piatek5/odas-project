@@ -110,12 +110,14 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
             ["deriveKey", "deriveBits"]
         );
 
-        // Zapisywanie sesji
+        // Zapisanie sesji
         window.sessionStorage.setItem('isLoggedIn', 'true');
         window.sessionStorage.setItem('currentUserId', userData.id);
-        // Zapisywanie zaszyfrowanego klucza i soli, aby móc je odzyskać na /send
+        // Zapisanie zaszyfrowanego klucza i soli, aby móc je odzyskać na /send
         window.sessionStorage.setItem('wrappedKeyX', userData.wrapped_priv_key_x25519);
         window.sessionStorage.setItem('userSalt', userData.kdf_salt);
+        // Zapisanie zaszyfrowanego klucza prywatnego Ed25519 do podpisów
+        window.sessionStorage.setItem('wrappedKeyEd', userData.wrapped_priv_key_ed25519);
 
         window.myPrivateKeyX = privateKeyX; 
         console.log("Sukces! Klucz prywatny odzyskany.");
@@ -154,7 +156,7 @@ async function sendMessage(recipientUsername, plainTextContent) {
         window.myPrivateKeyX = privateKey;
     }
 
-    // POBIERANIE DANYCH ODBIORCY (ID I KLUCZ) ---
+    // --- POBIERANIE DANYCH ODBIORCY (ID I KLUCZ) ---
     const response = await fetch(`/api/get-public-key/${recipientUsername}`);
     if (!response.ok) throw new Error("Nie znaleziono odbiorcy.");
     
@@ -173,13 +175,36 @@ async function sendMessage(recipientUsername, plainTextContent) {
         new TextEncoder().encode(plainTextContent)
     );
 
+    // --- PODPISYWANIE ED25519 ---
+    // Odzyskanie klucza prywatnego Ed25519 z sesji
+    const wrappedEdBase64 = window.sessionStorage.getItem('wrappedKeyEd');
+    const saltBase64 = window.sessionStorage.getItem('userSalt');
+    const password = prompt("Potwierdź hasło, aby podpisać wiadomość:"); // Jeszcze prompt, później hasła sesji
+    
+    const masterKey = await cryptoLib.deriveMasterKey(password, base64ToArrayBuffer(saltBase64));
+    const privateKeyEd = await window.crypto.subtle.unwrapKey(
+        "pkcs8",
+        base64ToArrayBuffer(wrappedEdBase64),
+        masterKey,
+        { name: "AES-GCM", iv: new Uint8Array(12) },
+        { name: "Ed25519" },
+        true, ["sign"]
+    );
+
+    // Podpisanie zaszyfrowanego buforu (encryptedBuffer)
+    const signatureBuffer = await window.crypto.subtle.sign(
+        { name: "Ed25519" },
+        privateKeyEd,
+        encryptedBuffer
+    );
+
     // --- BUDOWANIE PAYLOADU I WYSYŁKA ---
     const messagePayload = {
         sender_id: parseInt(window.sessionStorage.getItem('currentUserId')), // Pobranie z sesji
         receiver_id: recipientData.id,
         encrypted_payload: arrayBufferToBase64(encryptedBuffer),
         iv: arrayBufferToBase64(iv),
-        signature: "podpis_placeholder"
+        signature: arrayBufferToBase64(signatureBuffer)
     };
 
     console.log("Wysyłam payload:", messagePayload);

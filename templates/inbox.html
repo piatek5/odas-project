@@ -64,6 +64,24 @@
         }
 
         async function decryptIncomingMessage(msg) {
+            // Przygotowanie klucza publicznego nadawcy do weryfikacji
+            const senderPubKeyEdRaw = base64ToArrayBuffer(msg.sender_pub_key_ed25519);
+            const publicKeyEd = await window.crypto.subtle.importKey(
+                "raw", senderPubKeyEdRaw, { name: "Ed25519" }, true, ["verify"]
+            );
+
+            // WERYFIKACJA PODPISU
+            const isSignatureValid = await window.crypto.subtle.verify(
+                { name: "Ed25519" },
+                publicKeyEd,
+                base64ToArrayBuffer(msg.signature),
+                base64ToArrayBuffer(msg.encrypted_payload)
+            );
+
+            if (!isSignatureValid) {
+                throw new Error("UWAGA: Podpis cyfrowy jest nieprawidłowy! Wiadomość mogła zostać sfałszowana.");
+            }
+
             // Odzyskanie klucza prywatnego (analogicznie do sendMessage)
             let privKey = window.myPrivateKeyX;
             if (!privKey) {
