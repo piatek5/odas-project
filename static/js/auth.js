@@ -131,12 +131,17 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
 
         if (status) status.innerHTML = "<b style='color:green'>Zalogowano!</b>";
         window.sessionStorage.setItem('isLoggedIn', 'true');
+
+        window.location.href = "/dashboard"; // Przekierowanie na stronę główną
         
     } catch (err) {
         if (status) status.innerHTML = `<b style='color:red'>Błąd: ${err.message}</b>`;
         console.error(err);
     }
 });
+
+
+// --- WYSYŁANIE WIADOMOŚCI ---
 
 async function sendMessage(recipientUsername, plainTextContent, fileList) {
     let privateKey = window.myPrivateKeyX;
@@ -177,7 +182,6 @@ async function sendMessage(recipientUsername, plainTextContent, fileList) {
     // --- PRZYGOTOWANIE ZAŁĄCZNIKÓW ---
     const attachments = [];
     if (fileList && fileList.length > 0) {
-        // Dodatkowe zabezpieczenie wewnątrz funkcji
         if (fileList.length > 5) throw new Error("Zbyt duża liczba plików.");
 
         for (let i = 0; i < fileList.length; i++) {
@@ -254,4 +258,50 @@ async function sendMessage(recipientUsername, plainTextContent, fileList) {
 
     if (!sendRes.ok) throw new Error("Błąd zapisu wiadomości na serwerze.");
     return await sendRes.json();
+}
+
+async function decryptMessageUniversal(msg, pubKeyXBase64, pubKeyEdBase64) {
+    // 1. Weryfikacja podpisu Ed25519
+    const pubKeyEd = await window.crypto.subtle.importKey("raw", base64ToArrayBuffer(pubKeyEdBase64), { name: "Ed25519" }, true, ["verify"]);
+    const isValid = await window.crypto.subtle.verify(
+        { name: "Ed25519" }, 
+        pubKeyEd, 
+        base64ToArrayBuffer(msg.signature), 
+        base64ToArrayBuffer(msg.encrypted_payload)
+    );
+    
+    if (!isValid) throw new Error("Nieprawidłowy podpis cyfrowy!");
+
+    // 2. Odzyskanie własnego klucza prywatnego X25519
+    let privKeyX = window.myPrivateKeyX;
+    if (!privKeyX) {
+        const password = prompt("Wpisz hasło by odczytać:");
+        const masterKey = await cryptoLib.deriveMasterKey(password, base64ToArrayBuffer(window.sessionStorage.getItem('userSalt')));
+        privKeyX = await window.crypto.subtle.unwrapKey(
+            "pkcs8", 
+            base64ToArrayBuffer(window.sessionStorage.getItem('wrappedKeyX')),
+            masterKey, 
+            { name: "AES-GCM", iv: new Uint8Array(12) }, 
+            { name: "X25519" }, 
+            true, 
+            ["deriveKey", "deriveBits"]
+        );
+        window.myPrivateKeyX = privKeyX;
+    }
+
+    // 3. Deszyfracja pakietu
+    const sharedKey = await messageCrypto.deriveSharedSecret(privKeyX, base64ToArrayBuffer(pubKeyXBase64));
+    const decBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: base64ToArrayBuffer(msg.iv) }, 
+        sharedKey, 
+        base64ToArrayBuffer(msg.encrypted_payload)
+    );
+
+    return JSON.parse(new TextDecoder().decode(decBuffer));
+}
+
+function logoutUser() {
+    window.myPrivateKeyX = null;
+    window.sessionStorage.clear();
+    window.location.href = "/login";
 }

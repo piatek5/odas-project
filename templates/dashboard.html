@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel Wiadomości - ODAS</title>
+    <style>
+        body { display: flex; height: 100vh; margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; }
+        #sidebar { width: 260px; background-color: #2c3e50; color: white; display: flex; flex-direction: column; padding: 20px; box-shadow: 2px 0 5px rgba(0,0,0,0.1); }
+        #sidebar h2 { color: #1abc9c; font-size: 1.5rem; margin-bottom: 30px; }
+        .nav-btn { background: none; border: 1px solid transparent; color: #bdc3c7; padding: 12px; text-align: left; cursor: pointer; border-radius: 4px; font-size: 1rem; margin-bottom: 5px; transition: 0.3s; }
+        .nav-btn:hover, .nav-btn.active { background-color: #34495e; color: white; border-color: #1abc9c; }
+        .nav-btn.new-msg { background-color: #1abc9c; color: white; margin-top: 20px; text-align: center; font-weight: bold; }
+        .nav-btn.logout { background-color: #e74c3c; color: white; margin-top: auto; text-align: center; }
+
+        #main { flex-grow: 1; display: flex; flex-direction: column; overflow: hidden; }
+        #header { padding: 20px; background: white; border-bottom: 1px solid #ddd; }
+        #content { padding: 20px; overflow-y: auto; flex-grow: 1; }
+        
+        .message-card { background: white; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 5px solid #1abc9c; }
+        .message-card.sent { border-left-color: #3498db; }
+        .meta { font-size: 0.85rem; color: #95a5a6; margin-bottom: 8px; }
+        .text { line-height: 1.5; color: #333; }
+        .attachments { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .file-link { font-size: 0.8rem; background: #f1f1f1; padding: 5px 10px; border-radius: 15px; text-decoration: none; color: #2c3e50; border: 1px solid #ddd; }
+        .file-link:hover { background: #e8e8e8; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>ODAS ZK</h2>
+        <button class="nav-btn active" id="btn-inbox" onclick="changeView('inbox')">📥 Odebrane</button>
+        <button class="nav-btn" id="btn-sent" onclick="changeView('sent')">📤 Wysłane</button>
+        
+        <button class="nav-btn new-msg" onclick="window.location.href='/send'">+ Nowa Wiadomość</button>
+        <button class="nav-btn logout" onclick="logoutUser()">Wyloguj</button>
+    </div>
+
+    <div id="main">
+        <div id="header">
+            <h1 id="view-title">Wiadomości Odebrane</h1>
+            <div id="status">Ładowanie...</div>
+        </div>
+        <div id="content">
+            <div id="messagesList"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/crypto.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+    <script>
+        let currentView = 'inbox';
+
+        async function changeView(view) {
+            currentView = view;
+            // UI Update
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${view}`).classList.add('active');
+            document.getElementById('view-title').innerText = view === 'inbox' ? 'Wiadomości Odebrane' : 'Wiadomości Wysłane';
+            
+            await loadMessages();
+        }
+
+        async function loadMessages() {
+            const list = document.getElementById('messagesList');
+            const status = document.getElementById('status');
+            const userId = window.sessionStorage.getItem('currentUserId');
+            
+            list.innerHTML = "";
+            status.innerText = "Pobieranie i deszyfrowanie danych...";
+
+            try {
+                const endpoint = currentView === 'inbox' 
+                    ? `/api/messages/inbox/${userId}` 
+                    : `/api/messages/sent/${userId}`;
+                
+                const response = await fetch(endpoint);
+                const messages = await response.json();
+
+                if (messages.length === 0) {
+                    list.innerHTML = "<p>Brak wiadomości w tym folderze.</p>";
+                    status.innerText = "";
+                    return;
+                }
+
+                for (const msg of messages) {
+                    try {
+                        // MAPOWANIE PARAMETRÓW
+                        // X25519: Dla inbox to nadawca, dla sent to odbiorca (target_pub_key)
+                        const pubKeyX = currentView === 'inbox' ? msg.sender_pub_key : msg.target_pub_key;
+                        // Ed25519: Zawsze klucz tego, kto podpisał (nadawcy)
+                        const pubKeyEd = msg.sender_pub_key_ed25519;
+
+                        const data = await decryptMessageUniversal(msg, pubKeyX, pubKeyEd);
+                        renderMessage(msg, data, list);
+                    } catch (e) {
+                        console.error("Błąd dla pojedynczej wiadomości:", e);
+                    }
+                }
+                status.innerText = "";
+            } catch (err) {
+                status.innerHTML = `<b style='color:red'>Błąd krytyczny: ${err.message}</b>`;
+            }
+        }
+
+        function renderMessage(msg, data, container) {
+            const card = document.createElement('div');
+            card.className = `message-card ${currentView}`;
+            
+            const label = currentView === 'inbox' 
+                ? `Od: <b>${msg.sender_username}</b>` 
+                : `Do: <b>${msg.target_username}</b>`;
+
+            let attachmentsHtml = "";
+            if (data.attachments && data.attachments.length > 0) {
+                attachmentsHtml = `<div class="attachments">` + 
+                    data.attachments.map(f => `<a href="${f.data}" download="${f.name}" class="file-link">📎 ${f.name}</a>`).join('') + 
+                    `</div>`;
+            }
+
+            card.innerHTML = `
+                <div class="meta">${label} | ${msg.timestamp}</div>
+                <div class="text">${data.text}</div>
+                ${attachmentsHtml}
+            `;
+            container.appendChild(card);
+        }
+
+        // Automatyczne ładowanie po wejściu na stronę
+        window.onload = () => {
+            if (!window.sessionStorage.getItem('isLoggedIn')) {
+                window.location.href = "/login";
+            } else {
+                loadMessages();
+            }
+        };
+    </script>
+</body>
+</html>
