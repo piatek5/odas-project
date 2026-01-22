@@ -1,6 +1,17 @@
 
 // Konwersja binarnych danych na Base64
-const arrayBufferToBase64 = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer)));
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    
+    // Przetwarzamy dane w pętli zamiast używać .apply()
+    // co zapobiega błędowi "Maximum call stack size exceeded"
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
 
 // Konwersja Base64 na ArrayBuffer
 const base64ToArrayBuffer = base64 => {

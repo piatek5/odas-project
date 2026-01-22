@@ -1,14 +1,13 @@
 /**
- * Kontroler podwidoków Dashboardu (Zagnieżdżony w App)
+ * Kontroler podwidoków Dashboardu (Wersja z obsługą pobierania załączników)
  */
 const DashboardUI = {
     async init() {
         this.setupEventListeners();
-        await this.switchSubView('inbox'); // Domyślny podwidok
+        await this.switchSubView('inbox');
     },
 
     setupEventListeners() {
-        // Musisz upewnić się, że te ID są w Twoim dashboard.html (fragmencie)
         document.getElementById('btn-inbox').onclick = () => this.switchSubView('inbox');
         document.getElementById('btn-outbox').onclick = () => this.switchSubView('outbox');
         document.getElementById('btn-send').onclick = () => this.switchSubView('send');
@@ -19,7 +18,6 @@ const DashboardUI = {
         const container = document.getElementById('view-container');
         const title = document.getElementById('view-title');
 
-        // Sprawdzamy klucze w RAM (Zero Knowledge)
         await Messaging.ensureKeys();
 
         try {
@@ -30,7 +28,7 @@ const DashboardUI = {
                              (view === 'inbox') ? "Odebrane" : "Wysłane";
 
             if (view === 'send') {
-                document.getElementById('sendBtn').onclick = () => this.handleSend();
+                document.getElementById('send-action-btn').onclick = () => this.handleSend();
             } else {
                 await this.loadMessages(view);
             }
@@ -41,8 +39,8 @@ const DashboardUI = {
 
     async handleSend() {
         const recipient = document.getElementById('recipient').value;
-        const text = document.getElementById('messageContent').value;
-        const files = document.getElementById('attachments').files;
+        const text = document.getElementById('message-text').value;
+        const files = document.getElementById('message-files').files;
 
         try {
             await Messaging.send(recipient, text, files);
@@ -56,7 +54,8 @@ const DashboardUI = {
     async loadMessages(view) {
         const list = document.getElementById('messagesList');
         const userId = window.sessionStorage.getItem('currentUserId');
-        const endpoint = view === 'inbox' ? `/api/messages/inbox/${userId}` : `/api/messages/sent/${userId}`;
+        const apiPath = view === 'inbox' ? 'inbox' : 'outbox';
+        const endpoint = `/api/messages/${apiPath}/${userId}`;
 
         const res = await fetch(endpoint);
         const messages = await res.json();
@@ -67,6 +66,7 @@ const DashboardUI = {
             const pubKeyEd = msg.sender_pub_key_ed25519;
 
             try {
+                // Deszyfracja zwraca obiekt { text, attachments }
                 const data = await Messaging.decrypt(msg, pubKeyX, pubKeyEd);
                 this.renderMessageCard(msg, data, list, view);
             } catch (e) { console.error("Błąd deszyfracji", e); }
@@ -80,9 +80,53 @@ const DashboardUI = {
         
         card.innerHTML = `
             <div class="meta">${label} | ${msg.timestamp}</div>
-            <div class="text"></div>
+            <div class="text-content">
+                <p class="msg-body"></p>
+                <div class="attachments-list"></div>
+            </div>
         `;
-        card.querySelector('.text').innerText = data.text;
+        
+        card.querySelector('.msg-body').innerText = data.text;
+
+        // Renderowanie załączników
+        if (data.attachments && data.attachments.length > 0) {
+            const attachDiv = card.querySelector('.attachments-list');
+            attachDiv.innerHTML = "<strong>Załączniki:</strong><br>";
+            
+            data.attachments.forEach(file => {
+                const btn = document.createElement('button');
+                btn.className = "btn-download";
+                btn.innerText = `📎 Pobierz ${file.name}`;
+                // Klucz 'data' musi zgadzać się z Twoim messaging.js
+                btn.onclick = () => this.downloadFile(file.data, file.name, file.type);
+                attachDiv.appendChild(btn);
+            });
+        }
         container.appendChild(card);
+    },
+
+    // Pomocnicza funkcja do pobierania z RAM
+    downloadFile(base64Data, name, type) {
+        try {
+            // Usuwamy prefiks DataURL
+            const cleanBase64 = base64Data.split(',').pop();
+            const binaryString = window.atob(cleanBase64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const blob = new Blob([bytes], { type: type });
+            const url = window.URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name;
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            alert("Błąd pobierania pliku.");
+        }
     }
 };
