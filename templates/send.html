@@ -13,61 +13,18 @@
         <textarea id="messageContent" placeholder="Twoja tajna wiadomość..." rows="5" cols="40" required></textarea><br><br>
         <input type="file" id="attachments" multiple><br><br>
         <button type="submit">Szyfruj i wyślij</button>
-        <hr>
-        <a href="/dashboard">Powrót do panelu</a> | <a href="#" onclick="logoutUser()">Wyloguj</a>
     </form>
 
     <hr>
-    <a href="/login">Powrót do logowania</a>
+    <nav>
+        <a href="/dashboard">Powrót do panelu</a> | 
+        <button id="logoutBtn" style="background:none; border:none; color:blue; text-decoration:underline; cursor:pointer;">Wyloguj</button>
+    </nav>
 
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
     <script src="{{ url_for('static', filename='js/crypto.js') }}"></script>
     <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
-    <script>
-        // Logika specyficzna dla strony wysyłania
-        document.getElementById('sendForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const status = document.getElementById('status');
-            const fileInput = document.getElementById('attachments');
-            const files = fileInput.files;
-
-            // --- LIMITY ---
-            const MAX_FILE_COUNT = 5;
-            const MAX_SINGLE_SIZE = 2 * 1024 * 1024; // 2MB
-            const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB
-
-            if (files.length > MAX_FILE_COUNT) {
-                status.innerHTML = `<b style='color:red'>Błąd: Możesz przesłać maksymalnie ${MAX_FILE_COUNT} plików.</b>`;
-                return;
-            }
-
-            let totalSize = 0;
-            for (let file of files) {
-                if (file.size > MAX_SINGLE_SIZE) {
-                    status.innerHTML = `<b style='color:red'>Błąd: Plik ${file.name} przekracza limit 2MB.</b>`;
-                    return;
-                }
-                totalSize += file.size;
-            }
-
-            if (totalSize > MAX_TOTAL_SIZE) {
-                status.innerHTML = "<b style='color:red'>Błąd: Łączny rozmiar plików przekracza 10MB.</b>";
-                return;
-            }
-            
-            const recipient = document.getElementById('recipient').value;
-            const text = document.getElementById('messageContent').value;
-            
-            status.innerText = "Szyfrowanie i przetwarzanie plików...";
-
-            try {
-                await sendMessage(recipient, text, files);
-                status.innerHTML = "<b style='color:green'>Wiadomość wysłana pomyślnie!</b>";
-                document.getElementById('sendForm').reset();
-            } catch (err) {
-                status.innerHTML = `<b style='color:red'>Błąd: ${err.message}</b>`;
-                console.error(err);
-            }
-        });
-    </script>
+    <script src="{{ url_for('static', filename='js/messaging.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/send.js') }}"></script>
 </body>
 </html>

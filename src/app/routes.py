@@ -1,5 +1,9 @@
 from app.models import db, User, Message
 from flask import request, jsonify, render_template, redirect, url_for
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+
+ph = PasswordHasher()
 
 def init_routes(app):
     # --- WIDOKI (HTML) ---
@@ -30,9 +34,12 @@ def init_routes(app):
     def register():
         data = request.get_json()
         try:
+            # Hashowanie otrzymanego z frontendu LoginToken (SHA-256)
+            secure_db_hash = ph.hash(data['password_hash'])
+
             new_user = User(
                 username=data['username'],
-                password_hash=data['password_hash'],
+                password_hash=secure_db_hash, # Zapisujemy "hash hasha"
                 kdf_salt=data['kdf_salt'],
                 pub_key_x25519=data['pub_key_x25519'],
                 pub_key_ed25519=data['pub_key_ed25519'],
@@ -45,6 +52,22 @@ def init_routes(app):
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": str(e)}), 500
+        
+    # --- LOGOWANIE (Weryfikacja hasha) ---
+    @app.route('/api/login-verify', methods=['POST'])
+    def login_verify():
+        data = request.get_json()
+        user = User.query.filter_by(username=data['username']).first()
+        
+        if not user:
+            return jsonify({"error": "Błędne dane"}), 401
+
+        try:
+            # Weryfikujemy przesłany LoginToken z hashem w bazie
+            ph.verify(user.password_hash, data['password_hash'])
+            return jsonify({"status": "ok", "message": "Zalogowano pomyślnie"})
+        except VerifyMismatchError:
+            return jsonify({"error": "Błędne hasło"}), 401
 
     # --- API UŻYTKOWNIKÓW ---
 
