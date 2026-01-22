@@ -38,3 +38,5 @@ class Message(db.Model):
     iv = db.Column(db.Text, nullable=False)
 
     timestamp = db.Column(db.DateTime, server_default=db.func.now())
+
+    is_read = db.Column(db.Boolean, default=False)

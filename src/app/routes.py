@@ -140,15 +140,20 @@ def init_routes(app):
          .filter(Message.receiver_id == user_id)\
          .order_by(Message.timestamp.desc()).all()
 
-        return jsonify([{
-            "sender_username": row[1],
-            "sender_pub_key": row[2],
-            "sender_pub_key_ed25519": row[3],
-            "encrypted_payload": row[0].encrypted_payload,
-            "signature": row[0].signature,
-            "iv": row[0].iv,
-            "timestamp": row[0].timestamp.strftime("%Y-%m-%d %H:%M")
-        } for row in messages])
+        inbox_data = []
+        for msg, sender_name, sender_key_x, sender_key_ed in messages:
+            inbox_data.append({
+                "id": msg.id,
+                "is_read": msg.is_read,
+                "sender_username": sender_name,
+                "sender_pub_key": sender_key_x,
+                "sender_pub_key_ed25519": sender_key_ed,
+                "encrypted_payload": msg.encrypted_payload,
+                "signature": msg.signature,
+                "iv": msg.iv,
+                "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
+            })
+        return jsonify(inbox_data)
 
     @app.route('/api/messages/outbox/<int:user_id>')
     def get_outbox(user_id):
@@ -169,3 +174,33 @@ def init_routes(app):
             "iv": row[0].iv,
             "timestamp": row[0].timestamp.strftime("%Y-%m-%d %H:%M")
         } for row in messages])
+
+    # --- USUWANIE WIADOMOŚCI ---
+    @app.route('/api/messages/delete/<int:msg_id>', methods=['DELETE'])
+    def delete_message(msg_id):
+        try:
+            msg = Message.query.get(msg_id)
+            if not msg:
+                return jsonify({"error": "Wiadomość nie istnieje"}), 404
+            
+            db.session.delete(msg)
+            db.session.commit()
+            return jsonify({"status": "deleted"}), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500
+
+    # --- OZNACZANIE JAKO PRZECZYTANE ---
+    @app.route('/api/messages/mark-read/<int:msg_id>', methods=['PATCH'])
+    def mark_as_read(msg_id):
+        try:
+            msg = Message.query.get(msg_id)
+            if not msg:
+                return jsonify({"error": "Wiadomość nie istnieje"}), 404
+            
+            msg.is_read = True
+            db.session.commit()
+            return jsonify({"status": "marked_as_read"}), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500

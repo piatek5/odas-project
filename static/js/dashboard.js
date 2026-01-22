@@ -2,6 +2,10 @@
  * Kontroler podwidoków Dashboardu (Wersja z obsługą pobierania załączników)
  */
 const DashboardUI = {
+    state: {
+        currentView: 'inbox'
+    },
+
     async init() {
         this.setupEventListeners();
         await this.switchSubView('inbox');
@@ -15,6 +19,8 @@ const DashboardUI = {
     },
 
     async switchSubView(view) {
+        this.state.currentView = view;
+
         const container = document.getElementById('view-container');
         const title = document.getElementById('view-title');
 
@@ -75,7 +81,11 @@ const DashboardUI = {
 
     renderMessageCard(msg, data, container, view) {
         const card = document.createElement('div');
-        card.className = "message-card";
+        
+        // Klasa unread-bg służy do wizualnego wyróżnienia nowych wiadomości z bazy
+        card.className = `message-card ${msg.is_read ? 'read' : 'unread-bg'}`;
+        card.id = `msg-${msg.id}`;
+        
         const label = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
         
         card.innerHTML = `
@@ -84,11 +94,17 @@ const DashboardUI = {
                 <p class="msg-body"></p>
                 <div class="attachments-list"></div>
             </div>
+            <div class="message-actions">
+                ${view === 'inbox' && !msg.is_read ? 
+                    `<button class="btn-read" onclick="DashboardUI.handleMarkRead(${msg.id})">✔️ Przeczytane</button>` : ''}
+                <button class="btn-delete" onclick="DashboardUI.handleDelete(${msg.id})">🗑️ Usuń</button>
+            </div>
         `;
         
+        // Bezpieczne wstawianie tekstu (ochrona przed XSS)
         card.querySelector('.msg-body').innerText = data.text;
 
-        // Renderowanie załączników
+        // RENDEROWANIE ZAŁĄCZNIKÓW (Klucz 'data' z messaging.js)
         if (data.attachments && data.attachments.length > 0) {
             const attachDiv = card.querySelector('.attachments-list');
             attachDiv.innerHTML = "<strong>Załączniki:</strong><br>";
@@ -97,14 +113,39 @@ const DashboardUI = {
                 const btn = document.createElement('button');
                 btn.className = "btn-download";
                 btn.innerText = `📎 Pobierz ${file.name}`;
-                // Klucz 'data' musi zgadzać się z Twoim messaging.js
+                
+                // Pobieranie odbywa się lokalnie z RAM
                 btn.onclick = () => this.downloadFile(file.data, file.name, file.type);
                 attachDiv.appendChild(btn);
             });
         }
+
         container.appendChild(card);
     },
 
+    /**
+     * Obsługa oznaczenia jako przeczytane w bazie danych
+     */
+    async handleMarkRead(msgId) {
+        try {
+            const response = await fetch(`/api/messages/mark-read/${msgId}`, {
+                method: 'PATCH'
+            });
+
+            if (response.ok) {
+                const card = document.getElementById(`msg-${msgId}`);
+                card.classList.remove('unread-bg');
+                card.classList.add('read');
+                
+                // Usuwamy przycisk po udanej aktualizacji w bazie
+                const readBtn = card.querySelector('.btn-read');
+                if (readBtn) readBtn.remove();
+            }
+        } catch (e) {
+            console.error("Błąd synchronizacji statusu z bazą:", e);
+        }
+    },
+    
     // Pomocnicza funkcja do pobierania z RAM
     downloadFile(base64Data, name, type) {
         try {
@@ -128,5 +169,25 @@ const DashboardUI = {
         } catch (e) {
             alert("Błąd pobierania pliku.");
         }
-    }
+    },
+
+    // --- LOGIKA USUWANIA ---
+    async handleDelete(msgId) {
+        if (!confirm("Czy na pewno chcesz usunąć tę wiadomość?")) return;
+
+        try {
+            const res = await fetch(`/api/messages/delete/${msgId}`, { method: 'DELETE' });
+            if (res.ok) {
+                const element = document.getElementById(`msg-${msgId}`);
+                if (element) element.remove();
+                
+                // 3. TERAZ TO ZADZIAŁA: this.state.currentView jest już zdefiniowane
+                if (document.getElementById('messagesList').children.length === 0) {
+                    await this.switchSubView(this.state.currentView);
+                }
+            }
+        } catch (e) {
+            alert("Błąd podczas usuwania: " + e.message);
+        }
+    },
 };
