@@ -52,38 +52,58 @@ const Auth = {
     },
 
     // LOGOWANIE: Uwierzytelnienie i lokalne odblokowanie kluczy
-    async login(username, password) {
-        // 1. Pobranie danych użytkownika (sól i zaszyfrowane klucze)
+    async login(username, password, totpCode = null) {
+        // Pobranie danych użytkownika (sól i zaszyfrowane klucze)
         const response = await fetch(`/api/user-data/${username}`);
         if (!response.ok) throw new Error("Użytkownik nie istnieje");
         const userData = await response.json();
 
-        // 2. Generowanie tokenu logowania i weryfikacja na backendzie 
+        // Generowanie tokenu logowania i weryfikacja na backendzie 
         const loginToken = await this.generateLoginToken(username, password);
+
         const authResponse = await fetch('/api/login-verify', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ username, password_hash: loginToken })
+            body: JSON.stringify({ 
+                username, 
+                password_hash: loginToken,
+                totp_code: totpCode // Może być null przy pierwszej próbie
+            })
         });
 
-        if (!authResponse.ok) throw new Error("Błędne hasło lub login");
+        const authResult = await authResponse.json();
 
-        // 3. Odtworzenie MasterKey z hasła i pobranej soli
+        // Sprawdzamy, czy serwer żąda kodu 2FA
+        if (authResult.status === "2fa_required") {
+            return { status: "2fa_required" };
+        }
+
+        if (!authResponse.ok) throw new Error(authResult.error || "Błąd logowania");
+
+        // Odtworzenie MasterKey z hasła i pobranej soli
         const masterKey = await cryptoLib.deriveMasterKey(password, base64ToArrayBuffer(userData.kdf_salt));
         
-        // 4. Lokalne odszyfrowanie kluczy prywatnych
+        // ODBLOKOWUJEMY OBA KLUCZE NA RAZ 
         window.myPrivateKeyX = await window.crypto.subtle.unwrapKey(
             "pkcs8", base64ToArrayBuffer(userData.wrapped_priv_key_x25519),
             masterKey, { name: "AES-GCM", iv: new Uint8Array(12) }, 
             { name: "X25519" }, true, ["deriveKey", "deriveBits"]
         );
 
-        // 5. Ustawienie stanu sesji w przeglądarce
+        window.myPrivateKeyEd = await window.crypto.subtle.unwrapKey(
+            "pkcs8", base64ToArrayBuffer(userData.wrapped_priv_key_ed25519),
+            masterKey, { name: "AES-GCM", iv: new Uint8Array(12) }, 
+            { name: "Ed25519" }, true, ["sign"]
+        );
+
+        // Ustawienie stanu sesji w przeglądarce
         window.sessionStorage.setItem('isLoggedIn', 'true');
         window.sessionStorage.setItem('currentUserId', userData.id);
         window.sessionStorage.setItem('userSalt', userData.kdf_salt);
         window.sessionStorage.setItem('wrappedKeyX', userData.wrapped_priv_key_x25519);
         window.sessionStorage.setItem('wrappedKeyEd', userData.wrapped_priv_key_ed25519);
+
+        return { status: "ok" };
     },
 
     logout() {

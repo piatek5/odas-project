@@ -1,106 +1,88 @@
-
-const Dashboard = {
-    currentView: 'inbox',
-
-    // Inicjalizacja widoku
+/**
+ * Kontroler podwidoków Dashboardu (Zagnieżdżony w App)
+ */
+const DashboardUI = {
     async init() {
-        if (!window.sessionStorage.getItem('isLoggedIn')) {
-            window.location.href = "/login";
-            return;
-        }
-
         this.setupEventListeners();
-        await this.loadMessages();
+        await this.switchSubView('inbox'); // Domyślny podwidok
     },
 
-    // Podpięcie zdarzeń do przycisków (zamiast onclick w HTML)
     setupEventListeners() {
-        document.getElementById('btn-inbox')?.addEventListener('click', () => this.changeView('inbox'));
-        document.getElementById('btn-sent')?.addEventListener('click', () => this.changeView('sent'));
-        document.getElementById('logoutBtn')?.addEventListener('click', () => Auth.logout());
+        // Musisz upewnić się, że te ID są w Twoim dashboard.html (fragmencie)
+        document.getElementById('btn-inbox').onclick = () => this.switchSubView('inbox');
+        document.getElementById('btn-outbox').onclick = () => this.switchSubView('outbox');
+        document.getElementById('btn-send').onclick = () => this.switchSubView('send');
+        document.getElementById('logoutBtn').onclick = () => Auth.logout();
     },
 
-    // Zmiana folderu (Odebrane/Wysłane)
-    async changeView(view) {
-        this.currentView = view;
-        
-        // Aktualizacja stylów przycisków
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(`btn-${view}`)?.classList.add('active');
-        
-        // Aktualizacja nagłówka
-        document.getElementById('view-title').innerText = 
-            view === 'inbox' ? 'Wiadomości Odebrane' : 'Wiadomości Wysłane';
-        
-        await this.loadMessages();
-    },
+    async switchSubView(view) {
+        const container = document.getElementById('view-container');
+        const title = document.getElementById('view-title');
 
-    // Pobieranie i renderowanie listy
-    async loadMessages() {
-        const list = document.getElementById('messagesList');
-        const status = document.getElementById('status');
-        const userId = window.sessionStorage.getItem('currentUserId');
-        
-        list.innerHTML = "";
-        status.innerText = "Przetwarzanie danych...";
+        // Sprawdzamy klucze w RAM (Zero Knowledge)
+        await Messaging.ensureKeys();
 
         try {
-            const endpoint = this.currentView === 'inbox' 
-                ? `/api/messages/inbox/${userId}` 
-                : `/api/messages/sent/${userId}`;
+            const response = await fetch(`/get-fragment/${view}`);
+            container.innerHTML = await response.text();
             
-            const response = await fetch(endpoint);
-            const messages = await response.json();
+            title.innerText = (view === 'send') ? "Nowa Wiadomość" : 
+                             (view === 'inbox') ? "Odebrane" : "Wysłane";
 
-            if (messages.length === 0) {
-                list.innerHTML = "<p>Brak wiadomości w tym folderze.</p>";
-                status.innerText = "";
-                return;
+            if (view === 'send') {
+                document.getElementById('sendBtn').onclick = () => this.handleSend();
+            } else {
+                await this.loadMessages(view);
             }
-
-            for (const msg of messages) {
-                try {
-                    // Dobór kluczy dla deszyfracji zależnie od kontekstu
-                    const pubKeyX = this.currentView === 'inbox' ? msg.sender_pub_key : msg.target_pub_key;
-                    const pubKeyEd = msg.sender_pub_key_ed25519;
-
-                    // Wywołanie uniwersalnej funkcji z modułu Messaging
-                    const decryptedData = await Messaging.decrypt(msg, pubKeyX, pubKeyEd);
-                    this.renderMessage(msg, decryptedData, list);
-                } catch (e) {
-                    console.error("Błąd deszyfracji wiadomości:", e);
-                }
-            }
-            status.innerText = "";
-        } catch (err) {
-            status.innerHTML = `<b style='color:red'>Błąd ładowania: ${err.message}</b>`;
+        } catch (e) {
+            console.error("Błąd ładowania podwidoku:", e);
         }
     },
 
-    // Budowanie elementu HTML dla wiadomości
-    renderMessage(msg, data, container) {
-        const card = document.createElement('div');
-        card.className = `message-card ${this.currentView}`;
-        
-        const label = this.currentView === 'inbox' 
-            ? `Od: <b>${msg.sender_username}</b>` 
-            : `Do: <b>${msg.target_username}</b>`;
+    async handleSend() {
+        const recipient = document.getElementById('recipient').value;
+        const text = document.getElementById('messageContent').value;
+        const files = document.getElementById('attachments').files;
 
-        let attachmentsHtml = "";
-        if (data.attachments && data.attachments.length > 0) {
-            attachmentsHtml = `<div class="attachments">` + 
-                data.attachments.map(f => `<a href="${f.data}" download="${f.name}" class="file-link">📎 ${f.name}</a>`).join('') + 
-                `</div>`;
+        try {
+            await Messaging.send(recipient, text, files);
+            alert("Wysłano!");
+            await this.switchSubView('outbox');
+        } catch (e) {
+            alert("Błąd: " + e.message);
         }
+    },
 
+    async loadMessages(view) {
+        const list = document.getElementById('messagesList');
+        const userId = window.sessionStorage.getItem('currentUserId');
+        const endpoint = view === 'inbox' ? `/api/messages/inbox/${userId}` : `/api/messages/sent/${userId}`;
+
+        const res = await fetch(endpoint);
+        const messages = await res.json();
+        list.innerHTML = "";
+
+        for (const msg of messages) {
+            const pubKeyX = view === 'inbox' ? msg.sender_pub_key : msg.target_pub_key;
+            const pubKeyEd = msg.sender_pub_key_ed25519;
+
+            try {
+                const data = await Messaging.decrypt(msg, pubKeyX, pubKeyEd);
+                this.renderMessageCard(msg, data, list, view);
+            } catch (e) { console.error("Błąd deszyfracji", e); }
+        }
+    },
+
+    renderMessageCard(msg, data, container, view) {
+        const card = document.createElement('div');
+        card.className = "message-card";
+        const label = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
+        
         card.innerHTML = `
             <div class="meta">${label} | ${msg.timestamp}</div>
-            <div class="text">${data.text}</div>
-            ${attachmentsHtml}
+            <div class="text"></div>
         `;
+        card.querySelector('.text').innerText = data.text;
         container.appendChild(card);
     }
 };
-
-// Start aplikacji
-window.onload = () => Dashboard.init();

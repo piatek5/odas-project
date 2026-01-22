@@ -2,60 +2,67 @@ from app.models import db, User, Message
 from flask import request, jsonify, render_template, redirect, url_for
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+import pyotp
 
 ph = PasswordHasher()
 
 def init_routes(app):
-    # --- WIDOKI (HTML) ---
+    
+    # === WIDOKI SPA (HTML) ===
 
     @app.route('/')
     def index():
-        return redirect(url_for('dashboard'))
+        """Główny i jedyny punkt wejścia do aplikacji (Shell)"""
+        return render_template('main.html')
 
-    @app.route('/dashboard')
-    def dashboard():
-        return render_template('dashboard.html')
+    @app.route('/get-fragment/<name>')
+    def get_fragment(name):
+        """Serwuje fragmenty HTML do wstrzyknięcia w app-shell lub dashboard"""
+        # Lista dozwolonych fragmentów
+        allowed = ['login', 'register', 'dashboard', 'inbox', 'outbox', 'send']
+        if name in allowed:
+            # Zakładamy, że pliki są w folderze templates/fragments/
+            return render_template(f'fragments/{name}.html')
+        return "Widok nie istnieje", 404
 
-    @app.route('/login')
-    def login_page():
-        return render_template('login.html')
-
-    @app.route('/register')
-    def register_page():
-        return render_template('register.html')
-
-    @app.route('/send')
-    def send_page():
-        return render_template('send.html')
-
-    # --- REJESTRACJA ---
+    # === API UWIERZYTELNIANIA (2FA) ===
 
     @app.route('/register', methods=['POST'])
     def register():
+        """Rejestracja użytkownika z generowaniem sekretu TOTP"""
         data = request.get_json()
         try:
-            # Hashowanie otrzymanego z frontendu LoginToken (SHA-256)
+            # Hashowanie Argon2id
             secure_db_hash = ph.hash(data['password_hash'])
+            totp_secret = pyotp.random_base32()
 
             new_user = User(
                 username=data['username'],
-                password_hash=secure_db_hash, # Zapisujemy "hash hasha"
+                password_hash=secure_db_hash,
                 kdf_salt=data['kdf_salt'],
                 pub_key_x25519=data['pub_key_x25519'],
                 pub_key_ed25519=data['pub_key_ed25519'],
                 wrapped_priv_key_x25519=data['wrapped_priv_key_x25519'],
-                wrapped_priv_key_ed25519=data['wrapped_priv_key_ed25519']
+                wrapped_priv_key_ed25519=data['wrapped_priv_key_ed25519'],
+                totp_secret=totp_secret
             )
             db.session.add(new_user)
             db.session.commit()
-            return jsonify({"status": "registered"}), 201
+
+            # URI dla aplikacji mobilnej
+            provisioning_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
+                name=data['username'], 
+                issuer_name="ODAS_Secure_App"
+            )
+
+            return jsonify({"status": "registered", "totp_uri": provisioning_uri}), 201
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": str(e)}), 500
-        
-    # --- LOGOWANIE (Weryfikacja hasha) ---
+
     @app.route('/api/login-verify', methods=['POST'])
     def login_verify():
+        """Dwuetapowa weryfikacja logowania"""
         data = request.get_json()
         user = User.query.filter_by(username=data['username']).first()
         
@@ -63,19 +70,28 @@ def init_routes(app):
             return jsonify({"error": "Błędne dane"}), 401
 
         try:
-            # Weryfikujemy przesłany LoginToken z hashem w bazie
+            # 1. Hasło
             ph.verify(user.password_hash, data['password_hash'])
-            return jsonify({"status": "ok", "message": "Zalogowano pomyślnie"})
-        except VerifyMismatchError:
-            return jsonify({"error": "Błędne hasło"}), 401
+            
+            # 2. TOTP
+            totp_code = data.get('totp_code')
+            if not totp_code:
+                return jsonify({"status": "2fa_required"}), 200
+            
+            if not pyotp.TOTP(user.totp_secret).verify(totp_code):
+                return jsonify({"error": "Nieprawidłowy kod 2FA"}), 401
 
-    # --- API UŻYTKOWNIKÓW ---
+            return jsonify({"status": "ok", "message": "Zalogowano"})
+        except VerifyMismatchError:
+            return jsonify({"error": "Błędne dane"}), 401
+
+    # === API DANYCH UŻYTKOWNIKA ===
 
     @app.route('/api/user-data/<username>')
     def get_user_data(username):
+        """Pobiera sól i zaszyfrowane klucze dla zalogowanego użytkownika"""
         user = User.query.filter_by(username=username).first()
-        if not user:
-            return jsonify({"error": "Użytkownik nie istnieje"}), 404
+        if not user: return jsonify({"error": "Not found"}), 404
         return jsonify({
             "id": user.id,
             "kdf_salt": user.kdf_salt,
@@ -85,19 +101,20 @@ def init_routes(app):
 
     @app.route('/api/get-public-key/<username>')
     def get_public_key(username):
+        """Pobiera klucze publiczne odbiorcy do szyfrowania i weryfikacji"""
         user = User.query.filter_by(username=username).first()
-        if not user:
-            return jsonify({"error": "Użytkownik nie istnieje"}), 404
+        if not user: return jsonify({"error": "Not found"}), 404
         return jsonify({
             "id": user.id,
             "pub_key_x25519": user.pub_key_x25519,
             "pub_key_ed25519": user.pub_key_ed25519
         })
 
-    # --- API WIADOMOŚCI ---
+    # === API WIADOMOŚCI ===
 
     @app.route('/api/messages/send', methods=['POST'])
     def send_message():
+        """Zapisuje zaszyfrowaną wiadomość w bazie"""
         data = request.get_json()
         try:
             new_msg = Message(
@@ -116,27 +133,26 @@ def init_routes(app):
 
     @app.route('/api/messages/inbox/<int:user_id>')
     def get_inbox(user_id):
+        """Pobiera wiadomości odebrane wraz z danymi nadawcy"""
         messages = db.session.query(
             Message, User.username, User.pub_key_x25519, User.pub_key_ed25519
         ).join(User, Message.sender_id == User.id)\
          .filter(Message.receiver_id == user_id)\
          .order_by(Message.timestamp.desc()).all()
 
-        inbox_data = []
-        for msg, sender_name, sender_key_x, sender_key_ed in messages:
-            inbox_data.append({
-                "sender_username": sender_name,
-                "sender_pub_key": sender_key_x,
-                "sender_pub_key_ed25519": sender_key_ed,
-                "encrypted_payload": msg.encrypted_payload,
-                "signature": msg.signature,
-                "iv": msg.iv,
-                "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
-            })
-        return jsonify(inbox_data)
+        return jsonify([{
+            "sender_username": row[1],
+            "sender_pub_key": row[2],
+            "sender_pub_key_ed25519": row[3],
+            "encrypted_payload": row[0].encrypted_payload,
+            "signature": row[0].signature,
+            "iv": row[0].iv,
+            "timestamp": row[0].timestamp.strftime("%Y-%m-%d %H:%M")
+        } for row in messages])
 
-    @app.route('/api/messages/sent/<int:user_id>')
-    def get_sent_messages(user_id):
+    @app.route('/api/messages/outbox/<int:user_id>')
+    def get_outbox(user_id):
+        """Pobiera wiadomości wysłane wraz z danymi odbiorcy"""
         messages = db.session.query(
             Message, User.username, User.pub_key_x25519
         ).join(User, Message.receiver_id == User.id)\
@@ -144,16 +160,12 @@ def init_routes(app):
          .order_by(Message.timestamp.desc()).all()
 
         me = User.query.get(user_id)
-        sent_data = []
-        for msg, target_name, target_key_x in messages:
-            sent_data.append({
-                "target_username": target_name,
-                "target_pub_key": target_key_x,
-                "sender_pub_key_ed25519": me.pub_key_ed25519,
-                "encrypted_payload": msg.encrypted_payload,
-                "signature": msg.signature,
-                "iv": msg.iv,
-                "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
-            })
-        return jsonify(sent_data)
-    
+        return jsonify([{
+            "target_username": row[1],
+            "target_pub_key": row[2],
+            "sender_pub_key_ed25519": me.pub_key_ed25519,
+            "encrypted_payload": row[0].encrypted_payload,
+            "signature": row[0].signature,
+            "iv": row[0].iv,
+            "timestamp": row[0].timestamp.strftime("%Y-%m-%d %H:%M")
+        } for row in messages])

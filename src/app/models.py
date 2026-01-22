@@ -19,6 +19,9 @@ class User(db.Model):
     # Sól użyta do PBKDF2, potrzebna przy logowaniu do odtworzenia klucza
     kdf_salt = db.Column(db.Text, nullable=False)
 
+    # Przechowywany jako ciąg Base32 generowany przez pyotp
+    totp_secret = db.Column(db.String(32), nullable=True)
+
 class Message(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)

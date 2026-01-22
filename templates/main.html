@@ -2,31 +2,25 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Panel Wiadomości - ODAS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ODAS - Bezpieczna Platforma Komunikacyjna</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div id="sidebar">
-        <h2>ODAS ZK</h2>
-        <button class="nav-btn active" id="btn-inbox">📥 Odebrane</button>
-        <button class="nav-btn" id="btn-sent">📤 Wysłane</button>
-        <button class="nav-btn logout" id="logoutBtn">Wyloguj</button>
+    <div id="app-shell">
+        <p style="text-align:center; margin-top: 50px;">Inicjalizacja bezpiecznego połączenia...</p>
     </div>
 
-    <div id="main">
-        <div id="header">
-            <h1 id="view-title">Wiadomości Odebrane</h1>
-            <div id="status">Ładowanie...</div>
-        </div>
-        <div id="content">
-            <div id="messagesList"></div>
-        </div>
-    </div>
+    <div id="status" class="global-status"></div>
 
     <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
     <script src="{{ url_for('static', filename='js/crypto.js') }}"></script>
+    
     <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
     <script src="{{ url_for('static', filename='js/messaging.js') }}"></script>
+    
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
