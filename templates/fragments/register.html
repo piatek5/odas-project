@@ -2,8 +2,15 @@
     <h2>Utwórz bezpieczne konto</h2>
     <form id="registerForm">
         <input type="text" id="username" placeholder="Login" required><br><br>
-        <input type="password" id="password" placeholder="Hasło" required><br><br>
-        <button type="submit">Zarejestruj się</button>
+        
+        <input type="password" id="password" placeholder="Hasło" required>
+        <div id="password-strength-wrapper">
+            <div id="strength-bar"></div>
+            <small id="strength-text">Wpisz hasło...</small>
+        </div>
+        
+        <br>
+        <button type="submit" id="register-btn" disabled>Zarejestruj się</button>
     </form>
     
     <p style="margin-top: 15px;">

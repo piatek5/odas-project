@@ -1,9 +1,11 @@
 from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin
 
 db = SQLAlchemy()
 
-class User(db.Model):
+class User(UserMixin, db.Model):
 
+    # ID, nazwa użytkownika i hash hasła
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
@@ -37,6 +39,8 @@ class Message(db.Model):
     # Wektor inicjalizujący dla AES
     iv = db.Column(db.Text, nullable=False)
 
+    # Znacznik czasu wiadomości
     timestamp = db.Column(db.DateTime, server_default=db.func.now())
 
+    # Flaga oznaczenia wiadomości jako przeczytaną
     is_read = db.Column(db.Boolean, default=False)

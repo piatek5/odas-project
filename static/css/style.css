@@ -1,0 +1,24 @@
+#password-strength-wrapper {
+    width: 100%;
+    max-width: 300px;
+    margin: 10px 0;
+}
+
+#strength-bar {
+    height: 5px;
+    width: 0%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    border-radius: 2px;
+}
+
+#strength-text {
+    display: block;
+    margin-top: 5px;
+    font-size: 0.8em;
+}
+
+/* Kolory siły */
+.weak { background-color: #ff4d4d; }
+.medium { background-color: #ffd633; }
+.good { background-color: #33cc33; }
+.strong { background-color: #009900; }

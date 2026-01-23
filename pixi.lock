@@ -22,6 +22,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/deprecated-1.3.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/flask-3.1.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/flask-limiter-4.1.1-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/flask-login-0.6.3-pyhd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/flask-sqlalchemy-3.1.1-pyh29332c3_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/flask-talisman-1.1.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/flask-wtf-1.2.2-pyhd8ed1ab_1.conda
@@ -254,6 +255,19 @@ packages:
   - pkg:pypi/flask-limiter?source=hash-mapping
   size: 31641
   timestamp: 1765052905120
+- conda: https://conda.anaconda.org/conda-forge/noarch/flask-login-0.6.3-pyhd8ed1ab_2.conda
+  sha256: d50d005b15de19cfafde744cd1e7c371416db2c2300b6b848db5e5f53fdde6eb
+  md5: b040ac9fef7176cc5fff85a5982fdc74
+  depends:
+  - flask >=1.0.4
+  - python >=3.9
+  - werkzeug >=1.0.1
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/flask-login?source=hash-mapping
+  size: 20663
+  timestamp: 1733924557151
 - conda: https://conda.anaconda.org/conda-forge/noarch/flask-sqlalchemy-3.1.1-pyh29332c3_1.conda
   sha256: 574c002e58a405222a49418a6dd57dc7ad662b02a6297749d5c229c9628456c5
   md5: 0aec4d7f22e51d55e1ea298da3214129
@@ -679,7 +693,7 @@ packages:
 - pypi: ./
   name: odas
   version: 0.1.0
-  sha256: 9f5585f58e74fe6f78afde189a0fde540edf12de95fc6ca4ed102a54f90123bd
+  sha256: bd0f53e85278c6cfb1096c95a30e74b9aca32b9e59737c36f8bc06f432e01539
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/openldap-2.6.10-he970967_0.conda
   sha256: cb0b07db15e303e6f0a19646807715d28f1264c6350309a559702f4f34f37892
