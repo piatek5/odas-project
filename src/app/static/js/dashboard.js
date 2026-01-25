@@ -189,30 +189,37 @@ const DashboardUI = {
         }
     },
 
-    // Opcjonalna metoda do renderowania uszkodzonych wiadomości
+    // Metoda do renderowania uszkodzonych wiadomości
     renderCorruptedMessage(msg, container, view) {
-        // Tworzenie elementu karty wiadomości
         const card = document.createElement('div');
         card.className = `message-card error`;
         card.id = `msg-${msg.id}`;
-        // Dodanie stylów odstępu dla kart z błędami
+        
+        // Style
         card.style.marginBottom = "25px";
         card.style.borderBottom = "1px solid #ccc";
         card.style.paddingBottom = "15px";
 
-        // Wybór etykiety na podstawie kierunku wiadomości
-        const label = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
-        // Tworzenie struktury HTML karty z komunikatem błędu
+        // Zostawiamy puste tagi <span class="safe-label"></span> tam, gdzie mają trafić dane
         card.innerHTML = `
-            <div class="meta">${label} | ${msg.timestamp}</div>
+            <div class="meta">
+                <span class="safe-label"></span> | <span class="safe-time"></span>
+            </div>
             <div class="text-content">
                 <p style="color:red">⚠️ Błąd deszyfracji (Integrity Check Failed)</p>
             </div>
             <div class="message-actions">
-                <button class="btn-delete" onclick="DashboardUI.handleDelete(${msg.id})">🗑️ Usuń</button>
+                <button class="btn-delete">🗑️ Usuń</button>
             </div>
         `;
-        // Dodanie karty do kontenera
+
+        const labelText = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
+        
+        card.querySelector('.safe-label').textContent = labelText;
+        card.querySelector('.safe-time').textContent = msg.timestamp;
+
+        card.querySelector('.btn-delete').onclick = () => DashboardUI.handleDelete(msg.id);
+
         container.appendChild(card);
     },
 

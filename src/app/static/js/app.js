@@ -43,9 +43,9 @@ const App = {
             console.error("Module Load Error:", e);
             // Wstawianie komunikatu błędu do kontenera
             shell.innerHTML = `<div style="color:red; text-align:center; padding:20px;">
-                <h3>Wystąpił błąd</h3>
-                <p>${e.message}</p>
+            <h3>Wystąpił błąd</h3><p class="error-text"></p>
             </div>`;
+            shell.querySelector('.error-text').innerText = e.message;
         }
     },
 
@@ -128,7 +128,8 @@ const App = {
             if (!usernameValidation.isValid || !passwordAssessment.isValid) {
                 // Wybieranie komunikatu błędu na podstawie wyniku walidacji
                 const errorMsg = !usernameValidation.isValid ? usernameValidation.label : passwordAssessment.label;
-                statusDisplay.innerHTML = `<b style="color:red">${errorMsg}</b>`;
+                statusDisplay.innerHTML = '<b style="color:red"></b>';
+                statusDisplay.querySelector('b').innerText = errorMsg;
                 return;
             }
 
@@ -247,7 +248,10 @@ const App = {
             if (result.status === "ok") await this.loadModule('dashboard');
         } catch (err) {
             // Wyświetlenie komunikatu błędu logowania
-            if (status) status.innerHTML = `<b style="color:red">${err.message || genericError}</b>`;
+            if (status) {
+                status.innerHTML = '<b style="color:red"></b>';
+                status.querySelector('b').innerText = err.message || genericError;
+            }
         }
     },
 
