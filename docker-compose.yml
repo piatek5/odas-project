@@ -12,6 +12,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  redis:
+    image: redis:alpine
+    container_name: messenger_redis
+    restart: always
+    expose:
+      - "6379"
   web:
     build: .
     container_name: messenger_web
@@ -19,11 +25,13 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       PYTHONPATH: /app/src
+      RATELIMIT_STORAGE_URI: redis://messenger_redis:6379
     volumes:
       - .:/app
       - /app/.pixi
     depends_on:
       - db
+      - redis
     expose:
       - "5000"
 

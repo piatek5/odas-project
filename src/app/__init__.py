@@ -13,8 +13,11 @@ load_dotenv('../../.env')
 login_manager = LoginManager()
 login_manager.login_view = 'index'
 
+redis_uri = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
+
 limiter = Limiter(
     key_func=get_remote_address,
+    storage_uri=redis_uri,
     default_limits=["200 per day", "50 per hour"]
 )
 

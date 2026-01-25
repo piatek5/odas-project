@@ -1,18 +1,15 @@
 FROM ubuntu:22.04
 
-# Zmienne środowiskowe dla Pixi
-ENV PIXI_HOME="/root/.pixi"
-ENV PATH="$PIXI_HOME/bin:$PATH"
-
-ENV PYTHONUNBUFFERED=1
-
-ENV LC_ALL=C.UTF-8
-ENV LANG=C.UTF-8
-
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 odas_user && \
+    useradd -m -u 1000 -g odas_user -s /bin/bash odas_user
+
+ENV PIXI_HOME="/home/odas_user/.pixi"
+ENV PATH="$PIXI_HOME/bin:$PATH"
 
 # Instalacja Pixi
 RUN curl -fsSL https://pixi.sh/install.sh | bash
@@ -25,6 +22,9 @@ RUN pixi install --locked
 
 COPY . .
 
-EXPOSE 5000
+RUN chown -R odas_user:odas_user /app
+RUN chown -R odas_user:odas_user /home/odas_user
+
+USER odas_user
 
 CMD ["pixi", "run", "server"]
