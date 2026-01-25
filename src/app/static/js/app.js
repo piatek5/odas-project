@@ -256,15 +256,16 @@ const App = {
      * Automatycznie obsługuje wygaśnięcie sesji (401) oraz konflikt tożsamości.
      */
     async apiFetch(url, options = {}) {
+        // Flagę z options, żeby nie wysłać jej do fetch
+        const { skipAutoLogout, ...fetchOptions } = options;
   
-        const response = await fetch(url, options);
+        const response = await fetch(url, fetchOptions);
 
-        // Wykrywanie utraty sesji 
-        if (response.status === 401) {
+        // Wykrywanie utraty sesji (tylko jeśli nie wyłączyliśmy tego ręcznie)
+        if (response.status === 401 && !skipAutoLogout) {
             // Logowanie i wylogowanie użytkownika
             console.warn("Sesja wygasła (401). Wylogowywanie...");
             Auth.logout(); 
-            // Zwrócenie null do przerwania dalszego przetwarzania
             return null;
         }
 
@@ -274,15 +275,11 @@ const App = {
 
         // Wykrywanie podmiany użytkownika (bezpieczeństwo sesji)
         if (serverUserId && localUserId && serverUserId !== localUserId) {
-            // Logowanie krytycznego błędu bezpieczeństwa
             console.error(`Krytyczny błąd sesji! Serwer: ${serverUserId}, Klient: ${localUserId}`);
-            // Wylogowanie ze względów bezpieczeństwa
             Auth.logout();
-            // Zwrócenie null do przerwania dalszego przetwarzania
             return null;
         }
 
-        // Zwrócenie odpowiedzi jeśli wszystkie weryfikacje przeszły
         return response;
     },
 };

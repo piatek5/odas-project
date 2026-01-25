@@ -139,7 +139,8 @@ const Auth = {
                 username: cleanUsername, 
                 password_hash: subKeys.authToken,
                 totp_code: totpCode
-            })
+            }),
+            skipAutoLogout: true  // <--- To sprawi, że 401 zostanie zwrócone, a nie przechwycone
         });
         if (!authResponse) return;
 
