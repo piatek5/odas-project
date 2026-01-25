@@ -8,3 +8,6 @@ __pycache__/*
 
 # environment variables
 .env
+
+# certificates
+nginx/certs/*

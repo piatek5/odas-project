@@ -3,7 +3,7 @@ set -e
 
 # 1. Czekanie na bazę danych
 echo "Czekam na bazę danych PostgreSQL..."
-python -c "
+pixi run python -c "
 import socket
 import time
 import os

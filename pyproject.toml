@@ -32,6 +32,7 @@ argon2-cffi = ">=25.1.0,<26"
 pyotp = "*"
 python-dotenv = ">=1.2.1,<2"
 redis-py = ">=7.1.0,<8"
+cryptography = ">=46.0.3,<47"
 
 [tool.pixi.tasks]
 server = "uwsgi --master --http :5000 --wsgi-file wsgi.py --callable app --pythonpath src --processes 4 --threads 2 --buffer-size 32768"

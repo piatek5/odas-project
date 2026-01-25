@@ -1,5 +1,49 @@
 import base64
 import re
+import os
+from cryptography.fernet import Fernet
+
+_key = os.environ.get("TOTP_ENCRYPTION_KEY")
+cipher_suite = None
+
+if _key:
+    try:
+        cipher_suite = Fernet(_key.encode())
+    except Exception as e:
+        print(f"BŁĄD KRYTYCZNY: Nieprawidłowy format TOTP_ENCRYPTION_KEY! {e}")
+else:
+    print("Brak TOTP_ENCRYPTION_KEY w .env! Dane TOTP nie będą szyfrowane.")
+
+
+# --- FUNKCJE POMOCNICZE ---
+
+# Szyfruje sekret TOTP przed zapisem do bazy
+def encrypt_secret(plain_secret: str) -> str:
+    # Jeśli nie mamy klucza lub sekret jest pusty, zwracamy oryginał (lub None)
+    if not plain_secret: 
+        return None
+    if not cipher_suite: 
+        return plain_secret 
+    
+    try:
+        # Fernet zwraca bytes, baza woli stringi -> decode()
+        return cipher_suite.encrypt(plain_secret.encode()).decode()
+    except Exception as e:
+        print(f"Błąd szyfrowania: {e}")
+        return plain_secret  # Fallback (ewentualnie rzuć błąd)
+
+# Odszyfrowuje sekret TOTP po pobraniu z bazy
+def decrypt_secret(encrypted_secret: str) -> str:
+    if not encrypted_secret: 
+        return None
+    if not cipher_suite: 
+        return encrypted_secret
+    
+    try:
+        return cipher_suite.decrypt(encrypted_secret.encode()).decode()
+    except Exception as e:
+        print(f"Błąd deszyfrowania (może zły klucz?): {e}")
+        return None
 
 # Konwertuje dane binarne na ciąg znaków Base64.
 def arrayBufferToBase64(buffer):

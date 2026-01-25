@@ -73,7 +73,10 @@ def init_routes(app, limiter):
                     app.logger.error(f"Niepoprawny parametr: {key}")
                     return jsonify({"error": "Błąd w przetwarzaniu danych logowania"}), 400
 
-            totp_secret = pyotp.random_base32()
+            plain_totp_secret = pyotp.random_base32()
+
+            # Szyfrowanie totp_secret go przed zapisem
+            encrypted_totp_secret = utils.encrypt_secret(plain_totp_secret)
 
             # Przechowywanie danych w zaszyfrowanej sesji serwera
             session['pending_registration'] = {
@@ -84,10 +87,10 @@ def init_routes(app, limiter):
                 "pub_key_ed25519": data['pub_key_ed25519'],
                 "wrapped_priv_key_x25519": data['wrapped_priv_key_x25519'],
                 "wrapped_priv_key_ed25519": data['wrapped_priv_key_ed25519'],
-                "totp_secret": totp_secret
+                "totp_secret": encrypted_totp_secret
             }
 
-            provisioning_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
+            provisioning_uri = pyotp.totp.TOTP(plain_totp_secret).provisioning_uri(
                 name=username, issuer_name="ODAS_Secure_App"
             )
             return jsonify({"totp_uri": provisioning_uri}), 200
@@ -160,7 +163,16 @@ def init_routes(app, limiter):
                 if not totp_code:
                     return jsonify({"status": "2fa_required"}), 200
                 
-                if not pyotp.TOTP(user.totp_secret).verify(totp_code):
+                plain_totp_secret = utils.decrypt_secret(user.totp_secret)
+
+                # Zabezpieczenie na wypadek błędu deszyfrowania (np. zły klucz w .env)
+                if not plain_totp_secret:
+                    app.logger.error(f"Błąd: Nie udało się odszyfrować TOTP dla usera {username}")
+                    return jsonify({"error": "Błąd serwera (2FA)"}), 500
+
+                # Weryfikacja kodu przy użyciu ODSZYFROWANEGO sekretu
+                totp = pyotp.TOTP(plain_totp_secret)
+                if not totp.verify(totp_code):
                     return jsonify({"error": "Niepoprawny kod 2FA"}), 401
 
                 login_user(user)
