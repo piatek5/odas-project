@@ -27,4 +27,6 @@ RUN chown -R odas_user:odas_user /home/odas_user
 
 USER odas_user
 
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 CMD ["pixi", "run", "server"]
