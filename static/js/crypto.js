@@ -48,7 +48,7 @@ const cryptoLib = {
             );
             
         } else if (type === "aes") {
-            // Generowanie klucza AES-GCM (np. do szyfrowania kluczy prywatnych)
+            // Generowanie klucza AES-GCM
             return window.crypto.subtle.deriveKey(
                 { 
                     name: "HKDF", 

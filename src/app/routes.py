@@ -1,6 +1,6 @@
 import hashlib
 from app.models import db, User, Message
-from flask import app, request, jsonify, render_template, session
+from flask import request, jsonify, render_template, session
 from flask_login import login_user, login_required, current_user, logout_user
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -373,24 +373,26 @@ def init_routes(app, limiter):
             app.logger.error(f"Błąd usuwania msg_{msg_id}: {str(e)}")
             return jsonify({"error": "Błąd serwera"}), 500
 
-    # Oznaczanie wiadomości jako przeczytanej
-    @app.route('/api/messages/mark-read/<int:msg_id>', methods=['PATCH'])
+    # Zmiana statusu przeczytania
+    @app.route('/api/messages/toggle-read/<int:msg_id>', methods=['PATCH'])
     @login_required
-    def mark_as_read(msg_id):
+    def toggle_read_status(msg_id):
         try:
             msg = Message.query.get(msg_id)
             if not msg:
                 return jsonify({"error": "Zasób nie istnieje"}), 404
             
-            # Tylko odbiorca może oznaczyć wiadomość jako przeczytaną
+            # Tylko odbiorca może zmieniać status
             if msg.receiver_id != current_user.id:
                 return jsonify({"error": "Brak uprawnień"}), 403
             
-            msg.is_read = True
+            # PRZEŁĄCZNIK: Jeśli True to False, jeśli False to True
+            msg.is_read = not msg.is_read 
             db.session.commit()
-            return jsonify({"status": "ok"}), 200
+            
+            return jsonify({"status": "ok", "is_read": msg.is_read}), 200
             
         except Exception as e:
             db.session.rollback()
-            app.logger.error(f"Błąd oznaczania jako przeczytane msg_{msg_id}: {str(e)}")
+            app.logger.error(f"Błąd zmiany statusu msg_{msg_id}: {str(e)}")
             return jsonify({"error": "Błąd serwera"}), 500

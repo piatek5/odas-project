@@ -141,9 +141,6 @@ const Auth = {
                 totp_code: totpCode
             })
         });
-
-        // Jeśli wrapper wykrył 401 (tutaj oznacza to błędne hasło lub konflikt), 
-        // apiFetch zrobi redirect. Przerywamy działanie funkcji.
         if (!authResponse) return;
 
         const authResult = await authResponse.json();
