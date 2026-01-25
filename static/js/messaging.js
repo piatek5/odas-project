@@ -1,87 +1,156 @@
-
+// Moduł odpowiedzialny za bezpieczną komunikację, szyfrowanie i deszyfrowanie wiadomości
 const Messaging = {
-    // Funkcja gwarantująca obecność obu kluczy prywatnych w RAM
+    
+    // Gwarantowanie obecności kluczy prywatnych w pamięci RAM poprzez ich ewentualne odblokowanie
     async ensureKeys() {
-        // Jeśli oba klucze są już odblokowane, nic nie rób
+        // Pominięcie operacji, jeśli klucze są już dostępne w pamięci operacyjnej
         if (window.myPrivateKeyX && window.myPrivateKeyEd) return;
 
-        // Wyświetla prompt tylko raz, aby odblokować oba klucze jednocześnie
-        const password = prompt("Twoja sesja wymaga odblokowania kluczy bezpieczeństwa. Podaj hasło:");
-        if (!password) throw new Error("Hasło jest wymagane do przeprowadzenia operacji.");
+        // Wyświetlanie prośby o hasło w celu odblokowania tożsamości
+        const password = prompt("Wymagane odblokowanie kluczy bezpieczeństwa. Podaj hasło:");
+        if (!password || password.length === 0) {
+            throw new Error("Hasło jest niezbędne do przeprowadzenia operacji.");
+        }
 
-        const salt = base64ToArrayBuffer(window.sessionStorage.getItem('userSalt'));
-        const masterKey = await cryptoLib.deriveMasterKey(password, salt);
+        // Pobieranie niezbędnych metadanych z magazynu sesji
+        const saltB64 = window.sessionStorage.getItem('userSalt');
+        const wrappedX = window.sessionStorage.getItem('wrappedKeyX');
+        const wrappedEd = window.sessionStorage.getItem('wrappedKeyEd');
 
-        // 1. Odblokowanie klucza do deszyfracji i uzgadniania sekretów (X25519)
-        window.myPrivateKeyX = await window.crypto.subtle.unwrapKey(
-            "pkcs8", base64ToArrayBuffer(window.sessionStorage.getItem('wrappedKeyX')),
-            masterKey, { name: "AES-GCM", iv: new Uint8Array(12) },
-            { name: "X25519" }, true, ["deriveKey", "deriveBits"]
-        );
+        // Walidacja obecności danych sesyjnych
+        if (!saltB64 || !wrappedX || !wrappedEd) {
+            throw new Error("Błąd sesji: brak wymaganych metadanych kluczy.");
+        }
 
-        // 2. Odblokowanie klucza do podpisu cyfrowego (Ed25519)
-        window.myPrivateKeyEd = await window.crypto.subtle.unwrapKey(
-            "pkcs8", base64ToArrayBuffer(window.sessionStorage.getItem('wrappedKeyEd')),
-            masterKey, { name: "AES-GCM", iv: new Uint8Array(12) },
-            { name: "Ed25519" }, true, ["sign"]
-        );
+        // Wykorzystanie architektury HKDF do wyprowadzenia MasterKey (etykieta: encryption-v1)
+        const subKeys = await Auth.getDerivedSubKeys(password, saltB64);
+        if (!subKeys || !subKeys.masterKey) {
+            throw new Error("Nie udało się poprawnie wyprowadzić kluczy szyfrujących.");
+        }
+
+        try {
+            // Odblokowywanie klucza X25519
+            window.myPrivateKeyX = await window.crypto.subtle.unwrapKey(
+                "pkcs8", base64ToArrayBuffer(wrappedX),
+                subKeys.masterKey, { name: "AES-GCM", iv: new Uint8Array(12) },
+                { name: "X25519" }, true, ["deriveKey", "deriveBits"]
+            );
+
+            // Odblokowywanie klucza Ed25519
+            window.myPrivateKeyEd = await window.crypto.subtle.unwrapKey(
+                "pkcs8", base64ToArrayBuffer(wrappedEd),
+                subKeys.masterKey, { name: "AES-GCM", iv: new Uint8Array(12) },
+                { name: "Ed25519" }, true, ["sign"]
+            );
+        } catch (e) {
+            // Traktowanie błędów kryptograficznych jako niepoprawne hasło
+            throw new Error("Niepoprawne hasło. Odblokowanie kluczy nie powiodło się.");
+        }
     },
 
+    // Przygotowanie i wysłanie zaszyfrowanej oraz podpisanej wiadomości do odbiorcy
     async send(recipientUsername, text, fileList) {
-        // Sprawdź i ewentualnie odblokuj klucze (jeden prompt)
+        // Walidacja danych wejściowych przed przetwarzaniem
+        if (!recipientUsername || typeof recipientUsername !== 'string') {
+            throw new Error("Nie określono poprawnego odbiorcy.");
+        }
+        if (!text && (!fileList || fileList.length === 0)) {
+            throw new Error("Wiadomość musi zawierać treść lub załączniki.");
+        }
+
+        // Gwarantowanie dostępności kluczy w RAM
         await this.ensureKeys();
 
-        const res = await fetch(`/api/get-public-key/${recipientUsername}`);
-        if (!res.ok) throw new Error("Nie znaleziono odbiorcy.");
+        // Pobieranie kluczy publicznych odbiorcy przy użyciu App.apiFetch
+        const res = await App.apiFetch(`/api/get-public-key/${recipientUsername.trim()}`);
+        if (!res) return;
+
+        if (!res.ok) {
+            let errorMsg = "Nie odnaleziono kluczy publicznych odbiorcy.";
+            try {
+                const errData = await res.json();
+                if (errData.error) errorMsg = errData.error;
+            } catch (e) { /* fallback */ }
+            throw new Error(errorMsg);
+        }
+        
         const recipient = await res.json();
 
-        // ECDH - Uzgadnianie klucza wspólnego
+        // Uzgadnianie klucza wspólnego (Shared Secret) przy użyciu protokołu X25519
         const sharedKey = await messageCrypto.deriveSharedSecret(
             window.myPrivateKeyX, 
             base64ToArrayBuffer(recipient.pub_key_x25519)
         );
         
-        // Przygotowanie załączników
+        // Konwersja załączników do formatu Base64
         const attachments = [];
-        if (fileList) {
+        if (fileList && fileList.length > 0) {
             for (let file of fileList) {
-                attachments.push({ name: file.name, type: file.type, data: await fileToBase64(file) });
+                attachments.push({ 
+                    name: file.name, 
+                    type: file.type, 
+                    data: await fileToBase64(file) 
+                });
             }
         }
 
-        // Szyfrowanie pakietu danych (AES-GCM)
+        // Szyfrowanie ładunku danych (tekst + załączniki) algorytmem AES-GCM
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const payload = new TextEncoder().encode(JSON.stringify({ text, attachments }));
         const encrypted = await window.crypto.subtle.encrypt(
             { name: "AES-GCM", iv }, 
             sharedKey, 
-            new TextEncoder().encode(JSON.stringify({ text, attachments }))
+            payload
         );
 
-        // Podpis cyfrowy - używamy już odblokowanego klucza bez ponownego pytania o hasło
-        const sig = await window.crypto.subtle.sign({ name: "Ed25519" }, window.myPrivateKeyEd, encrypted);
+        // Składanie podpisu cyfrowego Ed25519 nad zaszyfrowanym pakietem
+        const signature = await window.crypto.subtle.sign(
+            { name: "Ed25519" }, 
+            window.myPrivateKeyEd, 
+            encrypted
+        );
 
-        return fetch('/api/messages/send', {
+        // Przesyłanie zaszyfrowanej paczki przy użyciu App.apiFetch
+        const sendResponse = await App.apiFetch('/api/messages/send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                sender_id: parseInt(window.sessionStorage.getItem('currentUserId')),
                 receiver_id: recipient.id,
                 encrypted_payload: arrayBufferToBase64(encrypted),
                 iv: arrayBufferToBase64(iv),
-                signature: arrayBufferToBase64(sig)
+                signature: arrayBufferToBase64(signature)
             })
         });
+        if (!sendResponse) return;
+
+        if (!sendResponse.ok) {
+            let errorMsg = "Nie udało się wysłać wiadomości.";
+            try {
+                const errData = await sendResponse.json();
+                if (errData.error) errorMsg = errData.error;
+            } catch (e) { /* fallback */ }
+            throw new Error(errorMsg);
+        }
+
+        return sendResponse;
     },
 
+    // Weryfikacja integralności i deszyfracja otrzymanej wiadomości
     async decrypt(msg, pubKeyXBase64, pubKeyEdBase64) {
-        // Sprawdź i ewentualnie odblokuj klucze
+        // Walidacja struktury wiadomości i kluczy nadawcy
+        if (!msg || !msg.encrypted_payload || !msg.signature || !msg.iv || !pubKeyXBase64 || !pubKeyEdBase64) {
+            throw new Error("Otrzymano niekompletną paczkę danych.");
+        }
+
+        // Gwarantowanie dostępności kluczy w RAM
         await this.ensureKeys();
 
-        // Weryfikacja podpisu cyfrowego nadawcy
+        // Importowanie klucza publicznego Ed25519 nadawcy
         const pubEd = await window.crypto.subtle.importKey(
             "raw", base64ToArrayBuffer(pubKeyEdBase64), { name: "Ed25519" }, true, ["verify"]
         );
         
+        // Weryfikacja podpisu cyfrowego przed próbą deszyfracji
         const isSignatureValid = await window.crypto.subtle.verify(
             { name: "Ed25519" }, 
             pubEd, 
@@ -90,10 +159,10 @@ const Messaging = {
         );
 
         if (!isSignatureValid) {
-            throw new Error("UWAGA: Naruszenie integralności! Podpis cyfrowy wiadomości jest nieprawidłowy.");
+            throw new Error("Krytyczne naruszenie integralności: Podpis cyfrowy jest nieprawidłowy.");
         }
 
-        // Uzgadnianie klucza i deszyfracja treści
+        // Uzgadnianie klucza wspólnego i deszyfracja treści wiadomości
         const sharedKey = await messageCrypto.deriveSharedSecret(
             window.myPrivateKeyX, 
             base64ToArrayBuffer(pubKeyXBase64)
@@ -105,6 +174,7 @@ const Messaging = {
             base64ToArrayBuffer(msg.encrypted_payload)
         );
 
+        // Dekodowanie binarnego wyniku do formatu tekstowego JSON
         return JSON.parse(new TextDecoder().decode(decBuffer));
     }
 };

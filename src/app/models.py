@@ -7,7 +7,7 @@ class User(UserMixin, db.Model):
 
     # ID, nazwa użytkownika i hash hasła
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
+    username = db.Column(db.String(32), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     
     # Klucze publiczne - przechowywane jawnie 

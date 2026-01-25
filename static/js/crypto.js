@@ -1,23 +1,70 @@
-
+// Biblioteka operacji kryptograficznych
 const cryptoLib = {
     
-    // Wyprowadzanie klucza AES z hasła
-    async deriveMasterKey(password, salt) {
+    // Generowanie silnego sekretu bazowego przy użyciu PBKDF2
+    async deriveBaseSecret(password, salt) {
+        // Walidacja wejściowa
+        if (!password || !salt) return null;
+
         const encoder = new TextEncoder();
         const baseKey = await window.crypto.subtle.importKey(
-            "raw", encoder.encode(password), "PBKDF2", false, ["deriveKey"]
+            "raw", encoder.encode(password), "PBKDF2", false, ["deriveBits", "deriveKey"]
         );
 
-        return window.crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: salt, iterations: 600000, hash: "SHA-256" },
+        // Wykonanie 600 000 iteracji PBKDF2
+        const derivedBits = await window.crypto.subtle.deriveBits(
+            { 
+                name: "PBKDF2", 
+                hash: "SHA-256",
+                salt: salt, 
+                iterations: 600000,  
+            },
             baseKey,
-            { name: "AES-GCM", length: 256 },
-            true,
-            ["wrapKey", "unwrapKey"]
+            256
+        );
+
+        // Importowanie uzyskanych bitów jako klucza bazowego dla HKDF
+        return window.crypto.subtle.importKey(
+            "raw", derivedBits, "HKDF", false, ["deriveBits", "deriveKey"]
         );
     },
 
-    // Generowanie par kluczy X25519 i Ed25519 
+    // Wyprowadzanie sub-klucza przy użyciu HKDF z określoną etykietą kontekstową
+    async expandSubKey(baseSecretKey, infoLabel, type) {
+        const encoder = new TextEncoder();
+        const info = encoder.encode(infoLabel);
+
+        if (type === "bits") {
+            // Generowanie surowych bitów (np. dla tokenu logowania)
+            return window.crypto.subtle.deriveBits(
+                { 
+                    name: "HKDF", 
+                    hash: "SHA-256", 
+                    salt: new Uint8Array(), 
+                    info: info 
+                },
+                baseSecretKey,
+                256
+            );
+            
+        } else if (type === "aes") {
+            // Generowanie klucza AES-GCM (np. do szyfrowania kluczy prywatnych)
+            return window.crypto.subtle.deriveKey(
+                { 
+                    name: "HKDF", 
+                    hash: "SHA-256", 
+                    salt: new Uint8Array(), 
+                    info: info 
+                },
+                baseSecretKey,
+                { name: "AES-GCM", length: 256 },
+                true,
+                ["wrapKey", "unwrapKey"]
+            );
+        }
+    },
+
+    // Generowanie par kluczy X25519 oraz Ed25519
     async generateKeyPairs() {
         const encryption = await window.crypto.subtle.generateKey(
             { name: "X25519" }, true, ["deriveKey", "deriveBits"]
@@ -28,15 +75,18 @@ const cryptoLib = {
         return { encryption, signing };
     },
 
-    // Pomocnicza funkcja do konwersji ArrayBuffer na Base64
+    // Konwersja danych binarnych na format Base64
     arrayBufferToBase64(buffer) {
+        if (!buffer) return "";
         return btoa(String.fromCharCode(...new Uint8Array(buffer)));
     }
 };
 
+
+// Operacje kryptograficzne związane z obsługą wiadomości
 const messageCrypto = {
 
-    // Uzgadnianie klucza sesji przy użyciu X25519 (ECDH) 
+    // Uzgadnianie klucza sesji przy użyciu protokołu ECDH (X25519)
     async deriveSharedSecret(privateKeyX, publicKeyX_Raw) {
         const importedPubKey = await window.crypto.subtle.importKey(
             "raw", publicKeyX_Raw, { name: "X25519" }, true, []

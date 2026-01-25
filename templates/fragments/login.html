@@ -1,10 +1,18 @@
 <div class="auth-container">
     <h2>Logowanie do ODAS</h2>
     <form id="loginForm">
-        <input type="text" id="login-user" placeholder="Login" required><br><br>
-        <input type="password" id="login-pass" placeholder="Hasło" required><br><br>
-        <button type="submit" id="login-exec-btn">Zaloguj bezpiecznie</button>
+        <input type="text" id="username" placeholder="Login" required autocomplete="username">
+        <br><br>
+        
+        <input type="password" id="password" placeholder="Hasło" required autocomplete="current-password">
+        <br><br>
+        
+        <button type="submit" id="login-exec-btn" class="btn-primary">
+            Zaloguj bezpiecznie
+        </button>
     </form>
+    
+    <div id="status" style="margin-top: 15px; min-height: 1.5em;"></div>
     
     <p style="margin-top: 15px;">
         Nie masz konta? 

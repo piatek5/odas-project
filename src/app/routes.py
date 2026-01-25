@@ -1,7 +1,7 @@
 import hashlib
 from app.models import db, User, Message
-from flask import request, jsonify, render_template, session
-from flask_login import login_user, login_required
+from flask import app, request, jsonify, render_template, session
+from flask_login import login_user, login_required, current_user, logout_user
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 import pyotp
@@ -10,164 +10,257 @@ from app import utils
 ph = PasswordHasher()
 
 def init_routes(app, limiter):
+
+    # === FLASK MIDDLEWARES ===
     
+    @app.after_request
+    def add_security_headers(response):
+        if current_user.is_authenticated:
+            response.headers['X-User-ID'] = str(current_user.id)
+        return response
+
     # === WIDOKI SPA ===
 
-    # GŁÓWNY I JEDYNY PUNKT WEJŚCIA DO APLIKACJI SPA
+    # Główny punkt wejścia do aplikacji
     @app.route('/')
     @limiter.limit("10 per minute")
     def index():
         return render_template('main.html')
 
-    # SERWUJE FRAGMENTY HTML DO WSTRZYKNIĘCIA DYNAMICZNEGO (app-shell, dashboard)
+    # Serwowanie fragmentów HTML do wstrzyknięcia dynamicznego
     @app.route('/get-fragment/<name>')
     @limiter.limit("60 per minute")
     def get_fragment(name):
-        # Lista dozwolonych fragmentów
         allowed = ['login', 'register', 'dashboard', 'inbox', 'outbox', 'send']
-        if name in allowed:
-            # Zakładamy, że pliki są w folderze templates/fragments/
-            return render_template(f'fragments/{name}.html')
-        return "Widok nie istnieje", 404
-
-
-    # === API UWIERZYTELNIANIA (2FA) ===
-
-    # Inicjalizacja rejestracji do momentu wygenerowania sekretu TOTP
-    @app.route('/api/register/init', methods=['POST'])
-    def register_init():
-        # Przyjęcie danych rejestracyjnych i wygenerowanie sekretu TOTP
-        data = request.get_json()
-        totp_secret = pyotp.random_base32()
-
-        # Przechowanie danych tymczasowo w sesji serwera
-        session['pending_registration'] = {
-            "username": data['username'],
-            "password_hash": ph.hash(data['password_hash']), # Hashowanie od razu
-            "kdf_salt": data['kdf_salt'],
-            "pub_key_x25519": data['pub_key_x25519'],
-            "pub_key_ed25519": data['pub_key_ed25519'],
-            "wrapped_priv_key_x25519": data['wrapped_priv_key_x25519'],
-            "wrapped_priv_key_ed25519": data['wrapped_priv_key_ed25519'],
-            "totp_secret": totp_secret
-        }
-
-        # Generowanie URI do zeskanowania w aplikacji 2FA
-        provisioning_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
-            name=data['username'], issuer_name="ODAS_Secure_App"
-        )
-        return jsonify({"totp_uri": provisioning_uri}), 200
-
-    # WERYFIKACJA KODU 2FA I ZAPIS UŻYTKOWNIKA DO BAZY
-    @app.route('/api/register/complete', methods=['POST'])
-    def register_complete():
-        # Pobranie kodu 2FA i danych z sesji
-        data = request.get_json()
-        pending = session.get('pending_registration')
         
-        if not pending:
-            return jsonify({"error": "Sesja rejestracji wygasła"}), 400
-
-        if pyotp.TOTP(pending['totp_secret']).verify(data['totp_code']):
-            try:
-                new_user = User(**pending) # Rozpakowanie danych z sesji
-                db.session.add(new_user)
-                db.session.commit()
-                session.pop('pending_registration') # Czyszczenie sesji z danych
-                return jsonify({"status": "registered"}), 201
-            except Exception as e:
-                db.session.rollback()
-                app.logger.error(f"Błąd rejestracji: {str(e)}")
-                
-                return jsonify({"error": "Wystąpił błąd podczas tworzenia konta. Spróbuj ponownie później."}), 500
-        
-        return jsonify({"error": "Nieprawidłowy kod 2FA"}), 401
-
-
-    # LOGOWANIE UŻYTKOWNIKA Z WERYFIKACJĄ 2FA
-    @app.route('/api/login-verify', methods=['POST'])
-    @limiter.limit("20 per minute")
-    def login_verify():
-        data = request.get_json()
-        user = User.query.filter_by(username=data['username']).first()
-        
-        # Ujednolicony komunikat o błędzie
-        generic_error = "Niepoprawny login lub hasło"
-
-        if not user:
-            # Symulujemy czas weryfikacji hasła, aby uniknąć ataków czasowych
-            ph.hash("dummy_password") 
-            return jsonify({"error": generic_error}), 401
+        # Walidacja nazwy fragmentu zapobiega próbom path traversal
+        if name not in allowed:
+            return "Widok nie istnieje", 404
 
         try:
-            ph.verify(user.password_hash, data['password_hash'])
+            return render_template(f'fragments/{name}.html')
+        except Exception as e:
+            # Logujemy błąd techniczny
+            app.logger.error(f"Błąd renderowania fragmentu {name}: {str(e)}")
+            return "Błąd wewnętrzny serwera. Nie udało się pobrać widoku.", 500
+
+
+    # === API UWIERZYTELNIANIA ===
+
+    # Inicjalizacja procesu rejestracji i generowanie sekretu TOTP
+    @app.route('/api/register/init', methods=['POST'])
+    @limiter.limit("5 per minute")
+    def register_init():
+        try:
+            data = request.get_json() or {}
             
+            # Walidacja danych wejściowych
+            username = str(data.get('username', '')).strip()
+            if not username or not isinstance(username, str) or not (3 <= len(username) <= 32):
+                return jsonify({"error": "Niepoprawny format loginu"}), 400
+            
+            # Sprawdzanie dostępności loginu przed procesem krypto
+            if User.query.filter_by(username=username).first():
+                return jsonify({"error": "Login jest już zajęty"}), 400
+
+            # Walidacja kluczy i soli (format Base64)
+            keys_to_validate = [
+                'password_hash', 'kdf_salt', 'pub_key_x25519', 
+                'pub_key_ed25519', 'wrapped_priv_key_x25519', 'wrapped_priv_key_ed25519'
+            ]
+            for key in keys_to_validate:
+                if not utils.validate_base64(data.get(key)):
+                    app.logger.error(f"Niepoprawny parametr: {key}")
+                    return jsonify({"error": "Błąd w przetwarzaniu danych logowania"}), 400
+
+            totp_secret = pyotp.random_base32()
+
+            # Przechowywanie danych w zaszyfrowanej sesji serwera
+            session['pending_registration'] = {
+                "username": username,
+                "password_hash": ph.hash(data['password_hash']),
+                "kdf_salt": data['kdf_salt'],
+                "pub_key_x25519": data['pub_key_x25519'],
+                "pub_key_ed25519": data['pub_key_ed25519'],
+                "wrapped_priv_key_x25519": data['wrapped_priv_key_x25519'],
+                "wrapped_priv_key_ed25519": data['wrapped_priv_key_ed25519'],
+                "totp_secret": totp_secret
+            }
+
+            provisioning_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
+                name=username, issuer_name="ODAS_Secure_App"
+            )
+            return jsonify({"totp_uri": provisioning_uri}), 200
+            
+        except Exception as e:
+            app.logger.error(f"Błąd inicjalizacji rejestracji: {str(e)}")
+            return jsonify({"error": "Błąd serwera podczas rejestracji"}), 500
+
+    # Finalizacja rejestracji po weryfikacji kodu 2FA
+    @app.route('/api/register/complete', methods=['POST'])
+    @limiter.limit("5 per minute")
+    def register_complete():
+        try:
+            data = request.get_json() or {}
             totp_code = data.get('totp_code')
-            if not totp_code:
-                return jsonify({"status": "2fa_required"}), 200
             
-            if not pyotp.TOTP(user.totp_secret).verify(totp_code):
-                # Błędne 2FA traktujemy tak samo jak błędne hasło
+            if not totp_code or not str(totp_code).isdigit() or len(str(totp_code)) != 6:
+                return jsonify({"error": "Niepoprawny kod 2FA"}), 400
+
+            pending = session.get('pending_registration')
+            if not pending:
+                return jsonify({"error": "Sesja wygasła lub nie istnieje"}), 400
+
+            if pyotp.TOTP(pending['totp_secret']).verify(totp_code):
+                try:
+                    # Blokada ponownej rejestracji tego samego loginu w oknie wyścigu
+                    if User.query.filter_by(username=pending['username']).first():
+                        return jsonify({"error": "Użytkownik już istnieje"}), 400
+
+                    new_user = User(**pending)
+                    db.session.add(new_user)
+                    db.session.commit()
+                    session.pop('pending_registration', None)
+                    return jsonify({"status": "registered"}), 201
+                except Exception as e:
+                    db.session.rollback()
+                    app.logger.error(f"Krytyczny błąd zapisu użytkownika: {str(e)}")
+                    return jsonify({"error": "Błąd zapisu użytkownika"}), 500
+            
+            return jsonify({"error": "Kod 2FA jest nieprawidłowy"}), 401
+            
+        except Exception as e:
+            app.logger.error(f"Błąd finalizacji rejestracji: {str(e)}")
+            return jsonify({"error": "Błąd serwera podczas rejestracji"}), 500
+
+    # Weryfikacja tożsamości przy logowaniu (2 etapy)
+    @app.route('/api/login-verify', methods=['POST'])
+    @limiter.limit("10 per minute")
+    def login_verify():
+        try:
+            data = request.get_json() or {}
+            username = str(data.get('username', ''))
+            password_token = data.get('password_hash')
+            generic_error = "Niepoprawny login lub hasło"
+
+            if not username or not utils.validate_base64(password_token):
                 return jsonify({"error": generic_error}), 401
 
-            login_user(user) # Inicjalizacja sesji
-            return jsonify({"status": "ok", "message": "Zalogowano"})
+            user = User.query.filter_by(username=username).first()
+
+            # Ochrona przed atakami czasowymi
+            if not user:
+                ph.hash("dummy_password_to_waste_time") 
+                return jsonify({"error": generic_error}), 401
+
+            try:
+                ph.verify(user.password_hash, password_token)
+                
+                totp_code = data.get('totp_code')
+                if not totp_code:
+                    return jsonify({"status": "2fa_required"}), 200
+                
+                if not pyotp.TOTP(user.totp_secret).verify(totp_code):
+                    return jsonify({"error": "Niepoprawny kod 2FA"}), 401
+
+                login_user(user)
+                return jsonify({"status": "ok", "message": "Zalogowano"})
+                
+            except VerifyMismatchError:
+                return jsonify({"error": generic_error}), 401
+                
+        except Exception as e:
+            app.logger.error(f"Błąd logowania: {str(e)}")
+            return jsonify({"error": "Błąd serwera podczas logowania"}), 500
+
+    # Kończenie sesji użytkownika
+    @app.route('/logout')
+    @login_required
+    def logout():
+        logout_user()
+        return jsonify({"status": "logged_out"}), 200
+
+
+    # === API DANYCH I WIADOMOŚCI ===
+
+    # Pobieranie kluczy publicznych odbiorcy
+    @app.route('/api/get-public-key/<username>')
+    @login_required
+    def get_public_key(username):
+        try:
+            target_name = str(username).strip()
+            user = User.query.filter_by(username=target_name).first()
             
-        except VerifyMismatchError:
-            return jsonify({"error": generic_error}), 401
+            if not user:
+                return jsonify({"error": "Odbiorca nie istnieje"}), 404
+                
+            return jsonify({
+                "id": user.id,
+                "pub_key_x25519": user.pub_key_x25519,
+                "pub_key_ed25519": user.pub_key_ed25519
+            })
+        except Exception as e:
+            app.logger.error(f"Błąd pobierania klucza publicznego: {str(e)}")
+            return jsonify({"error": "Błąd serwera"}), 500
 
-    # === API DANYCH UŻYTKOWNIKA ===
-
+    # Pobieranie soli KDF dla użytkownika (obsługa dummy user)
     @app.route('/api/user-data/<username>')
     @limiter.limit("20 per minute")
     def get_user_data(username):
-        user = User.query.filter_by(username=username).first()
-        
-        if not user:
-            # Generujemy deterministyczną, ale fałszywą sól na podstawie loginu i klucza serwera.
-            # Dzięki temu dla "jan" zawsze przyjdzie ta sama "sól", co utrudnia wykrycie oszustwa.
-            server_secret = app.config['SECRET_KEY']
-            fake_salt = hashlib.sha256((username + server_secret).encode()).digest()
+        try:
+            username = str(username).strip()
+            user = User.query.filter_by(username=username).first()
             
+            if not user:
+                # Generowanie deterministycznej soli zapobiega enumeracji użytkowników
+                server_secret = app.config['SECRET_KEY']
+                fake_salt = hashlib.sha256((username + server_secret).encode()).digest()[:16]
+                return jsonify({
+                    "id": 0,
+                    "kdf_salt": utils.arrayBufferToBase64(fake_salt),
+                    "wrapped_priv_key_x25519": "fake_key_data_base64",
+                    "wrapped_priv_key_ed25519": "fake_key_data_base64"
+                })
+
             return jsonify({
-                "id": 0,
-                "kdf_salt": utils.arrayBufferToBase64(fake_salt), # Musisz mieć tę funkcję dostępną w Pythonie
-                "wrapped_priv_key_x25519": "Zm9sZHNlX2tleV8x...", # Losowy Base64
-                "wrapped_priv_key_ed25519": "QW5vdGhlcl9mYWtl..."
+                "id": user.id,
+                "kdf_salt": user.kdf_salt,
+                "wrapped_priv_key_x25519": user.wrapped_priv_key_x25519,
+                "wrapped_priv_key_ed25519": user.wrapped_priv_key_ed25519
             })
+        except Exception as e:
+            app.logger.error(f"Błąd pobierania danych użytkownika: {str(e)}")
+            return jsonify({"error": "Błąd serwera"}), 500
 
-        return jsonify({
-            "id": user.id,
-            "kdf_salt": user.kdf_salt,
-            "wrapped_priv_key_x25519": user.wrapped_priv_key_x25519,
-            "wrapped_priv_key_ed25519": user.wrapped_priv_key_ed25519
-        })
-
-    @app.route('/api/get-public-key/<username>')
-    @login_required
-    @limiter.limit("100 per minute")
-    def get_public_key(username):
-        """Pobiera klucze publiczne odbiorcy do szyfrowania i weryfikacji"""
-        user = User.query.filter_by(username=username).first()
-        if not user: return jsonify({"error": "Not found"}), 404
-        return jsonify({
-            "id": user.id,
-            "pub_key_x25519": user.pub_key_x25519,
-            "pub_key_ed25519": user.pub_key_ed25519
-        })
-
-    # === API WIADOMOŚCI ===
-
+    # Zapisywanie nowej zaszyfrowanej wiadomości
     @app.route('/api/messages/send', methods=['POST'])
     @login_required
-    @limiter.limit("60 per minute")
+    @limiter.limit("30 per minute")
     def send_message():
-        """Zapisuje zaszyfrowaną wiadomość w bazie"""
-        data = request.get_json()
         try:
+            data = request.get_json() or {}
+            
+            # Walidacja danych wejściowych
+            receiver_id = data.get('receiver_id')
+            if not isinstance(receiver_id, int):
+                return jsonify({"error": "Niepoprawny odbiorca"}), 400
+
+            # Sender_id z sesji
+            sender_id = current_user.id
+
+            # Walidacja kryptograficzna paczki
+            if not utils.validate_base64(data.get('encrypted_payload'), (1, 1000000)):
+                return jsonify({"error": "Błąd paczki danych"}), 400
+            if not utils.validate_base64(data.get('iv'), (16, 32)) or not utils.validate_base64(data.get('signature'), (64, 128)):
+                app.logger.error("Niepoprawny format IV lub podpisu")
+                return jsonify({"error": "Błąd paczki danych"}), 400
+
+            if not User.query.get(receiver_id):
+                return jsonify({"error": "Odbiorca nie istnieje"}), 404
+
             new_msg = Message(
-                sender_id=data['sender_id'],
-                receiver_id=data['receiver_id'],
+                sender_id=sender_id,
+                receiver_id=receiver_id,
                 encrypted_payload=data['encrypted_payload'],
                 iv=data['iv'],
                 signature=data['signature']
@@ -175,59 +268,89 @@ def init_routes(app, limiter):
             db.session.add(new_msg)
             db.session.commit()
             return jsonify({"status": "sent"}), 201
+        
         except Exception as e:
             db.session.rollback()
-            return jsonify({"error": str(e)}), 500
+            app.logger.error(f"Błąd wysyłania: {str(e)}")
+            return jsonify({"error": "Nie udało się wysłać wiadomości (Błąd serwera)"}), 500
 
-    @app.route('/api/messages/inbox/<int:user_id>')
+    # Pobieranie listy wiadomości odebranych dla zalogowanego użytkownika
+    @app.route('/api/messages/inbox')
     @login_required
     @limiter.limit("40 per minute")
-    def get_inbox(user_id):
-        """Pobiera wiadomości odebrane wraz z danymi nadawcy"""
-        messages = db.session.query(
-            Message, User.username, User.pub_key_x25519, User.pub_key_ed25519
-        ).join(User, Message.sender_id == User.id)\
-         .filter(Message.receiver_id == user_id)\
-         .order_by(Message.timestamp.desc()).all()
+    def get_inbox():
+        try:
+            # ID użytkownika pobierane z sesji
+            user_id = current_user.id
+            
+            messages = db.session.query(
+                Message, User.username, User.pub_key_x25519, User.pub_key_ed25519
+            ).join(User, Message.sender_id == User.id)\
+            .filter(Message.receiver_id == user_id)\
+            .order_by(Message.timestamp.desc()).all()
 
-        inbox_data = []
-        for msg, sender_name, sender_key_x, sender_key_ed in messages:
-            inbox_data.append({
-                "id": msg.id,
-                "is_read": msg.is_read,
-                "sender_username": sender_name,
-                "sender_pub_key": sender_key_x,
-                "sender_pub_key_ed25519": sender_key_ed,
-                "encrypted_payload": msg.encrypted_payload,
-                "signature": msg.signature,
-                "iv": msg.iv,
-                "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
-            })
-        return jsonify(inbox_data)
-
-    @app.route('/api/messages/outbox/<int:user_id>')
+            inbox_data = []
+            
+            for msg, s_name, s_key_x, s_key_ed in messages:
+                msg_entry = {
+                    "id": msg.id,
+                    "is_read": msg.is_read,
+                    "sender_username": s_name,
+                    "sender_pub_key": s_key_x,
+                    "sender_pub_key_ed25519": s_key_ed,
+                    "encrypted_payload": msg.encrypted_payload,
+                    "signature": msg.signature,
+                    "iv": msg.iv,
+                    "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
+                }
+                inbox_data.append(msg_entry)
+                
+            return jsonify(inbox_data)
+        
+        except Exception as e:
+            app.logger.error(f"Błąd pobierania skrzynki odbiorczej: {str(e)}")
+            return jsonify({"error": "Nie udało się pobrać wiadomości"}), 500
+    
+    # Pobieranie listy wiadomości wysłanych przez zalogowanego użytkownika
+    @app.route('/api/messages/outbox')
     @login_required
     @limiter.limit("40 per minute")
-    def get_outbox(user_id):
-        """Pobiera wiadomości wysłane wraz z danymi odbiorcy"""
-        messages = db.session.query(
-            Message, User.username, User.pub_key_x25519
-        ).join(User, Message.receiver_id == User.id)\
-         .filter(Message.sender_id == user_id)\
-         .order_by(Message.timestamp.desc()).all()
+    def get_outbox():
+        try:
+            user_id = current_user.id
+            
+            messages = db.session.query(
+                Message, User.username, User.pub_key_x25519
+            ).join(User, Message.receiver_id == User.id)\
+            .filter(Message.sender_id == user_id)\
+            .order_by(Message.timestamp.desc()).all()
 
-        me = User.query.get(user_id)
-        return jsonify([{
-            "target_username": row[1],
-            "target_pub_key": row[2],
-            "sender_pub_key_ed25519": me.pub_key_ed25519,
-            "encrypted_payload": row[0].encrypted_payload,
-            "signature": row[0].signature,
-            "iv": row[0].iv,
-            "timestamp": row[0].timestamp.strftime("%Y-%m-%d %H:%M")
-        } for row in messages])
+            me = User.query.get(user_id)
+            if not me:
+                return jsonify({"error": "Błąd autoryzacji"}), 401
 
-    # --- USUWANIE WIADOMOŚCI ---
+            outbox_data = []
+            
+            for msg, target_name, target_key_x in messages:
+                msg_entry = {
+                    "id": msg.id,
+                    "target_username": target_name,
+                    "target_pub_key": target_key_x,
+                    "sender_pub_key_ed25519": me.pub_key_ed25519,
+                    "encrypted_payload": msg.encrypted_payload,
+                    "signature": msg.signature,
+                    "iv": msg.iv,
+                    "timestamp": msg.timestamp.strftime("%Y-%m-%d %H:%M")
+                }
+                outbox_data.append(msg_entry)
+                
+            return jsonify(outbox_data)
+        
+        except Exception as e:
+            app.logger.error(f"Błąd pobierania skrzynki nadawczej: {str(e)}")
+            return jsonify({"error": "Nie udało się pobrać wysłanych wiadomości"}), 500
+
+    # Usuwanie wiadomości z weryfikacją właściciela
     @app.route('/api/messages/delete/<int:msg_id>', methods=['DELETE'])
     @login_required
     @limiter.limit("60 per minute")
@@ -235,28 +358,39 @@ def init_routes(app, limiter):
         try:
             msg = Message.query.get(msg_id)
             if not msg:
-                return jsonify({"error": "Wiadomość nie istnieje"}), 404
+                return jsonify({"error": "Zasób nie istnieje"}), 404
+            
+            # Weryfikacja czy użytkownik jest nadawcą lub odbiorcą
+            if current_user.id not in [msg.sender_id, msg.receiver_id]:
+                return jsonify({"error": "Brak uprawnień"}), 403
             
             db.session.delete(msg)
             db.session.commit()
             return jsonify({"status": "deleted"}), 200
+        
         except Exception as e:
             db.session.rollback()
-            return jsonify({"error": str(e)}), 500
+            app.logger.error(f"Błąd usuwania msg_{msg_id}: {str(e)}")
+            return jsonify({"error": "Błąd serwera"}), 500
 
-    # --- OZNACZANIE JAKO PRZECZYTANE ---
+    # Oznaczanie wiadomości jako przeczytanej
     @app.route('/api/messages/mark-read/<int:msg_id>', methods=['PATCH'])
     @login_required
-    @limiter.limit("100 per minute")
     def mark_as_read(msg_id):
         try:
             msg = Message.query.get(msg_id)
             if not msg:
-                return jsonify({"error": "Wiadomość nie istnieje"}), 404
+                return jsonify({"error": "Zasób nie istnieje"}), 404
+            
+            # Tylko odbiorca może oznaczyć wiadomość jako przeczytaną
+            if msg.receiver_id != current_user.id:
+                return jsonify({"error": "Brak uprawnień"}), 403
             
             msg.is_read = True
             db.session.commit()
-            return jsonify({"status": "marked_as_read"}), 200
+            return jsonify({"status": "ok"}), 200
+            
         except Exception as e:
             db.session.rollback()
-            return jsonify({"error": str(e)}), 500
+            app.logger.error(f"Błąd oznaczania jako przeczytane msg_{msg_id}: {str(e)}")
+            return jsonify({"error": "Błąd serwera"}), 500

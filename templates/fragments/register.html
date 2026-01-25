@@ -1,17 +1,24 @@
 <div class="auth-container">
     <h2>Utwórz bezpieczne konto</h2>
     <form id="registerForm">
-        <input type="text" id="username" placeholder="Login" required><br><br>
+        <input type="text" id="username" placeholder="Login" required autocomplete="username">
+        <div id="user-status" style="font-size: 0.8em; margin-top: 5px; margin-bottom: 10px; min-height: 1em;"></div>
         
-        <input type="password" id="password" placeholder="Hasło" required>
-        <div id="password-strength-wrapper">
-            <div id="strength-bar"></div>
-            <small id="strength-text">Wpisz hasło...</small>
+        <input type="password" id="password" placeholder="Hasło" required autocomplete="new-password">
+        <div id="password-strength-wrapper" style="margin-top: 5px;">
+            <div id="strength-bar-container" style="background: #eee; height: 5px; border-radius: 3px; margin-bottom: 5px;">
+                <div id="strength-bar" style="height: 100%; width: 0%; border-radius: 3px; transition: width 0.3s ease;"></div>
+            </div>
+            <div id="strength-text" style="line-height: 1.4;">Wpisz hasło...</div>
         </div>
         
         <br>
-        <button type="submit" id="register-btn" disabled>Zarejestruj się</button>
+        <button type="submit" id="register-btn" disabled class="btn-primary">
+            Zarejestruj się
+        </button>
     </form>
+    
+    <div id="status" style="margin-top: 15px;"></div>
     
     <p style="margin-top: 15px;">
         Masz już konto? 

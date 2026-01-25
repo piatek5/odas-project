@@ -1,110 +1,216 @@
 /**
- * Kontroler podwidoków Dashboardu (Wersja z obsługą pobierania załączników)
+ * Kontroler interfejsu użytkownika po zalogowaniu
  */
 const DashboardUI = {
     state: {
         currentView: 'inbox'
     },
 
+    // Inicjalizacja nasłuchiwania zdarzeń i ładowanie widoku domyślnego
     async init() {
         this.setupEventListeners();
         await this.switchSubView('inbox');
     },
 
+    // Podpinanie obsługi zdarzeń dla elementów nawigacji paska bocznego
     setupEventListeners() {
-        document.getElementById('btn-inbox').onclick = () => this.switchSubView('inbox');
-        document.getElementById('btn-outbox').onclick = () => this.switchSubView('outbox');
-        document.getElementById('btn-send').onclick = () => this.switchSubView('send');
-        document.getElementById('logoutBtn').onclick = () => Auth.logout();
+        const inboxBtn = document.getElementById('btn-inbox');
+        const outboxBtn = document.getElementById('btn-outbox');
+        const sendBtn = document.getElementById('btn-send');
+        const logoutBtn = document.getElementById('logoutBtn');
+
+        if (inboxBtn) inboxBtn.onclick = () => this.switchSubView('inbox');
+        if (outboxBtn) outboxBtn.onclick = () => this.switchSubView('outbox');
+        if (sendBtn) sendBtn.onclick = () => this.switchSubView('send');
+        if (logoutBtn) logoutBtn.onclick = () => Auth.logout();
     },
 
+    // Przełączanie między podwidokami z ukrywaniem szczegółów błędów ładowania
     async switchSubView(view) {
-        this.state.currentView = view;
+        const allowedViews = ['inbox', 'outbox', 'send'];
+        if (!allowedViews.includes(view)) return;
 
+        this.state.currentView = view;
         const container = document.getElementById('view-container');
         const title = document.getElementById('view-title');
 
-        await Messaging.ensureKeys();
+        if (!container || !title) return;
+
+        // Gwarantowanie dostępności kluczy kryptograficznych
+        try {
+            await Messaging.ensureKeys();
+        } catch (e) {
+            alert(e.message);
+            return;
+        }
 
         try {
-            const response = await fetch(`/get-fragment/${view}`);
+            const response = await App.apiFetch(`/get-fragment/${view}`);
+            if (!response) return;
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || "Błąd pobierania widoku");
+            }
+            
             container.innerHTML = await response.text();
             
             title.innerText = (view === 'send') ? "Nowa Wiadomość" : 
                              (view === 'inbox') ? "Odebrane" : "Wysłane";
 
             if (view === 'send') {
-                document.getElementById('send-action-btn').onclick = () => this.handleSend();
+                const sendBtn = document.getElementById('send-action-btn');
+                if (sendBtn) sendBtn.onclick = () => this.handleSend();
             } else {
                 await this.loadMessages(view);
             }
         } catch (e) {
-            console.error("Błąd ładowania podwidoku:", e);
+            // Logowanie techniczne dla dewelopera
+            console.error("View Load Error:", e); 
+            // Generyczny komunikat dla użytkownika
+            container.innerHTML = `<p style="color:red">Nie udało się załadować widoku: ${e.message}</p>`;
         }
     },
 
+    // Obsługa wysyłania wiadomości
     async handleSend() {
-        const recipient = document.getElementById('recipient').value;
-        const text = document.getElementById('message-text').value;
-        const files = document.getElementById('message-files').files;
+        const recipient = document.getElementById('recipient')?.value;
+        const text = document.getElementById('message-text')?.value;
+        const files = document.getElementById('message-files')?.files;
 
         try {
-            await Messaging.send(recipient, text, files);
-            alert("Wysłano!");
+            // Walidacja negatywna po stronie klienta
+            if (!recipient) throw new Error("Niepoprawny odbiorca.");
+            if (!text && (!files || files.length === 0)) throw new Error("Wiadomość jest pusta.");
+
+            const response = await Messaging.send(recipient, text, files);
+            if (!response) return;
+
+            // Jeśli doszliśmy tutaj, to sukces (Messaging.send rzuca błędy dla !ok)
+            alert("Wiadomość została wysłana.");
             await this.switchSubView('outbox');
+
         } catch (e) {
-            alert("Błąd: " + e.message);
+            console.error("Send failure:", e);
+            // Wyświetlamy błąd z Messaging.send (np. "Odbiorca nie istnieje")
+            alert(`Nie udało się wysłać wiadomości: ${e.message}`);
         }
     },
 
+    // Pobieranie i deszyfrowanie listy wiadomości
     async loadMessages(view) {
         const list = document.getElementById('messagesList');
-        const userId = window.sessionStorage.getItem('currentUserId');
+        if (!list) return;
+
         const apiPath = view === 'inbox' ? 'inbox' : 'outbox';
-        const endpoint = `/api/messages/${apiPath}/${userId}`;
+        const endpoint = `/api/messages/${apiPath}`;
 
-        const res = await fetch(endpoint);
-        const messages = await res.json();
-        list.innerHTML = "";
+        try {
+            const response = await App.apiFetch(endpoint);
+            
+            if (!response) return;
 
-        for (const msg of messages) {
-            const pubKeyX = view === 'inbox' ? msg.sender_pub_key : msg.target_pub_key;
-            const pubKeyEd = msg.sender_pub_key_ed25519;
+            if (!response.ok) {
+                // Próba odczytania błędu JSON
+                let errorMsg = "Błąd pobierania";
+                try {
+                    const errData = await response.json();
+                    if (errData.error) errorMsg = errData.error;
+                } catch(e) {/* fallback */}
+                throw new Error(errorMsg);
+            }
 
-            try {
-                // Deszyfracja zwraca obiekt { text, attachments }
-                const data = await Messaging.decrypt(msg, pubKeyX, pubKeyEd);
-                this.renderMessageCard(msg, data, list, view);
-            } catch (e) { console.error("Błąd deszyfracji", e); }
+            const messages = await response.json();
+            list.innerHTML = "";
+
+            if (messages.length === 0) {
+                list.innerHTML = "<p>Brak wiadomości.</p>";
+                return;
+            }
+
+            for (const msg of messages) {
+                const pubKeyX = (view === 'inbox') ? msg.sender_pub_key : msg.target_pub_key;
+                const pubKeyEd = msg.sender_pub_key_ed25519;
+
+                try {
+                    const data = await Messaging.decrypt(msg, pubKeyX, pubKeyEd);
+                    this.renderMessageCard(msg, data, list, view);
+                } catch (e) { 
+                    // Błąd deszyfracji logowany
+                    console.error("Decryption error for msg ID:", msg.id, e);
+                    // Wyświetlanie uszkodzonej wiadomości
+                    this.renderCorruptedMessage(msg, list, view); 
+                }
+            }
+        } catch (e) {
+            console.error("LoadMessages Error:", e);
+            list.innerHTML = `<p style="color:red">Nie udało się pobrać wiadomości: ${e.message}</p>`;
         }
     },
 
+    // Opcjonalna metoda do renderowania uszkodzonych wiadomości
+    renderCorruptedMessage(msg, container, view) {
+        const card = document.createElement('div');
+        card.className = `message-card error`;
+        card.id = `msg-${msg.id}`;
+        const label = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
+        card.innerHTML = `
+            <div class="meta">${label} | ${msg.timestamp}</div>
+            <div class="text-content">
+                <p style="color:red">⚠️ Błąd deszyfracji (Integrity Check Failed)</p>
+            </div>
+            <div class="message-actions">
+                <button class="btn-delete" onclick="DashboardUI.handleDelete(${msg.id})">🗑️ Usuń</button>
+            </div>
+        `;
+        container.appendChild(card);
+    },
+
+    // Renderowanie karty wiadomości z bezpiecznym wstawianiem treści
     renderMessageCard(msg, data, container, view) {
         const card = document.createElement('div');
-        
-        // Klasa unread-bg służy do wizualnego wyróżnienia nowych wiadomości z bazy
         card.className = `message-card ${msg.is_read ? 'read' : 'unread-bg'}`;
         card.id = `msg-${msg.id}`;
         
-        const label = (view === 'inbox') ? 'Od: ' + msg.sender_username : 'Do: ' + msg.target_username;
-        
+        // Puste spany tam, gdzie ma być tekst użytkownika
         card.innerHTML = `
-            <div class="meta">${label} | ${msg.timestamp}</div>
+            <div class="meta">
+                <span class="meta-label"></span> | <span class="meta-time"></span>
+            </div>
             <div class="text-content">
                 <p class="msg-body"></p>
                 <div class="attachments-list"></div>
             </div>
             <div class="message-actions">
                 ${view === 'inbox' && !msg.is_read ? 
-                    `<button class="btn-read" onclick="DashboardUI.handleMarkRead(${msg.id})">✔️ Przeczytane</button>` : ''}
-                <button class="btn-delete" onclick="DashboardUI.handleDelete(${msg.id})">🗑️ Usuń</button>
+                    `<button class="btn-read">✔️ Przeczytane</button>` : ''}
+                <button class="btn-delete">🗑️ Usuń</button>
             </div>
         `;
         
-        // Bezpieczne wstawianie tekstu (ochrona przed XSS)
-        card.querySelector('.msg-body').innerText = data.text;
+        // 2. Wstrzykujemy dane użytkownika bezpiecznie przez innerText / textContent
+        
+        // Bezpieczne wstawianie nazwy użytkownika
+        const labelPrefix = (view === 'inbox') ? 'Od: ' : 'Do: ';
+        const username = (view === 'inbox') ? msg.sender_username : msg.target_username;
+       
+        // Nazwa użytkownika i prrefiks
+        card.querySelector('.meta-label').innerText = labelPrefix + username;
+        
+        // Czas wiadomości
+        card.querySelector('.meta-time').textContent = msg.timestamp;
 
-        // RENDEROWANIE ZAŁĄCZNIKÓW (Klucz 'data' z messaging.js)
+        // Treść wiadomości
+        card.querySelector('.msg-body').innerText = data.text || "(Brak treści)";
+        
+        // Obsługa przycisków akcji
+        const readBtn = card.querySelector('.btn-read');
+        if (readBtn) readBtn.onclick = () => DashboardUI.handleMarkRead(msg.id);
+
+        const deleteBtn = card.querySelector('.btn-delete');
+        if (deleteBtn) deleteBtn.onclick = () => DashboardUI.handleDelete(msg.id);
+
+        // Obsługa załączników
         if (data.attachments && data.attachments.length > 0) {
             const attachDiv = card.querySelector('.attachments-list');
             attachDiv.innerHTML = "<strong>Załączniki:</strong><br>";
@@ -113,81 +219,80 @@ const DashboardUI = {
                 const btn = document.createElement('button');
                 btn.className = "btn-download";
                 btn.innerText = `📎 Pobierz ${file.name}`;
-                
-                // Pobieranie odbywa się lokalnie z RAM
                 btn.onclick = () => this.downloadFile(file.data, file.name, file.type);
                 attachDiv.appendChild(btn);
             });
         }
-
         container.appendChild(card);
     },
 
-    /**
-     * Obsługa oznaczenia jako przeczytane w bazie danych
-     */
+    // Aktualizacja statusu przeczytania
     async handleMarkRead(msgId) {
+        if (!msgId) return;
         try {
-            const response = await fetch(`/api/messages/mark-read/${msgId}`, {
-                method: 'PATCH'
-            });
+            const response = await App.apiFetch(`/api/messages/mark-read/${msgId}`, { method: 'PATCH' });
+            if (!response) return;
 
             if (response.ok) {
                 const card = document.getElementById(`msg-${msgId}`);
-                card.classList.remove('unread-bg');
-                card.classList.add('read');
-                
-                // Usuwamy przycisk po udanej aktualizacji w bazie
-                const readBtn = card.querySelector('.btn-read');
-                if (readBtn) readBtn.remove();
+                if (card) {
+                    card.classList.remove('unread-bg');
+                    card.classList.add('read');
+                    const readBtn = card.querySelector('.btn-read');
+                    if (readBtn) readBtn.remove();
+                }
             }
         } catch (e) {
-            console.error("Błąd synchronizacji statusu z bazą:", e);
+            console.error("Status update error:", e);
         }
     },
     
-    // Pomocnicza funkcja do pobierania z RAM
+    // Funkcja pobierania plików z generycznym komunikatem błędu
     downloadFile(base64Data, name, type) {
         try {
-            // Usuwamy prefiks DataURL
+            if (!base64Data) throw new Error("No data");
             const cleanBase64 = base64Data.split(',').pop();
             const binaryString = window.atob(cleanBase64);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
-
-            const blob = new Blob([bytes], { type: type });
+            const blob = new Blob([bytes], { type: type || 'application/octet-stream' });
             const url = window.URL.createObjectURL(blob);
-            
             const a = document.createElement('a');
             a.href = url;
-            a.download = name;
+            a.download = name || 'file';
             a.click();
-            
             window.URL.revokeObjectURL(url);
         } catch (e) {
-            alert("Błąd pobierania pliku.");
+            console.error("Download Error:", e);
+            alert("Nie udało się pobrać pliku.");
         }
     },
 
-    // --- LOGIKA USUWANIA ---
+    // Usuwanie wiadomości z maskowaniem przyczyn niepowodzenia
     async handleDelete(msgId) {
-        if (!confirm("Czy na pewno chcesz usunąć tę wiadomość?")) return;
-
+        if (!msgId || !confirm("Czy na pewno chcesz usunąć tę wiadomość?")) return;
         try {
-            const res = await fetch(`/api/messages/delete/${msgId}`, { method: 'DELETE' });
-            if (res.ok) {
+            const response = await App.apiFetch(`/api/messages/delete/${msgId}`, { method: 'DELETE' });
+            if (!response) return;
+
+            if (response.ok) {
                 const element = document.getElementById(`msg-${msgId}`);
                 if (element) element.remove();
                 
-                // 3. TERAZ TO ZADZIAŁA: this.state.currentView jest już zdefiniowane
-                if (document.getElementById('messagesList').children.length === 0) {
-                    await this.switchSubView(this.state.currentView);
+                const list = document.getElementById('messagesList');
+                if (list && list.children.length === 0) {
+                    // Odświeżenie widoku, jeśli usunięto ostatnią wiadomość
+                    // Ponieważ lista jest pusta, komunikat "Brak wiadomości" zostanie wyświetlony
+                    list.innerHTML = "<p>Brak wiadomości.</p>";
                 }
+            } else {
+                throw new Error("Serwer odrzucił żądanie");
             }
         } catch (e) {
-            alert("Błąd podczas usuwania: " + e.message);
+            console.error("Delete Error:", e);
+            alert("Nie udało się usunąć wiadomości.");
         }
     },
 };

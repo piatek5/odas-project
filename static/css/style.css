@@ -1,24 +1,61 @@
+/* Kontener dla informacji o sile hasła */
 #password-strength-wrapper {
     width: 100%;
     max-width: 300px;
-    margin: 10px 0;
+    margin: 5px 0 15px 0;
 }
 
+/* Tło paska (tor), po którym przesuwa się wskaźnik */
+#strength-bar-container {
+    background-color: #eee;
+    height: 6px;
+    border-radius: 3px;
+    margin-bottom: 8px;
+    overflow: hidden; /* Zapewnia, że pasek nie wyjdzie poza zaokrąglenia */
+}
+
+/* Właściwy pasek postępu */
 #strength-bar {
-    height: 5px;
+    height: 100%;
     width: 0%;
-    transition: width 0.3s ease, background-color 0.3s ease;
-    border-radius: 2px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;
+    border-radius: 3px;
 }
 
+/* Kontener na listę wymagań ✓/○ */
 #strength-text {
     display: block;
-    margin-top: 5px;
-    font-size: 0.8em;
+    font-size: 0.85em;
+    line-height: 1.6;
+    color: #555;
 }
 
-/* Kolory siły */
-.weak { background-color: #ff4d4d; }
-.medium { background-color: #ffd633; }
-.good { background-color: #33cc33; }
-.strong { background-color: #009900; }
+/* Status walidacji loginu */
+#user-status {
+    font-size: 0.8em;
+    margin-top: -8px;
+    margin-bottom: 12px;
+    min-height: 1.2em; /* Zapobiega "skakaniu" formularza przy pojawieniu się tekstu */
+    transition: color 0.2s ease;
+}
+
+/* Kolory dynamiczne paska siły */
+.weak { background-color: #ff4d4d !important; }   /* Czerwony */
+.medium { background-color: #ffd633 !important; } /* Żółty */
+.strong { background-color: #4CAF50 !important; } /* Zielony */
+
+/* Styl przycisku rejestracji (gdy jest zablokowany) */
+button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+/* Komunikaty statusu w kontenerze #status */
+#status b {
+    display: block;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-top: 10px;
+}
