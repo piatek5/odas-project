@@ -255,10 +255,7 @@ const App = {
         }
     },
 
-    /**
-     * Bezpieczny wrapper na fetch API.
-     * Automatycznie obsługuje wygaśnięcie sesji (401) oraz konflikt tożsamości.
-     */
+    // Bezpieczny wrapper na fetch API.
     async apiFetch(url, options = {}) {
         // Flagę z options, żeby nie wysłać jej do fetch
         const { skipAutoLogout, ...fetchOptions } = options;
