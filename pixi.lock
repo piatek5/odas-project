@@ -693,7 +693,7 @@ packages:
 - pypi: ./
   name: odas
   version: 0.1.0
-  sha256: bd0f53e85278c6cfb1096c95a30e74b9aca32b9e59737c36f8bc06f432e01539
+  sha256: b4e2f33be661d3573848f288153c8a51ed45e35b3c0a5ef5737d61d851777166
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/openldap-2.6.10-he970967_0.conda
   sha256: cb0b07db15e303e6f0a19646807715d28f1264c6350309a559702f4f34f37892

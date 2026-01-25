@@ -33,5 +33,5 @@ pyotp = "*"
 python-dotenv = ">=1.2.1,<2"
 
 [tool.pixi.tasks]
-server = "uwsgi --master --http :5000 --wsgi-file wsgi.py --callable app --pythonpath src"
+server = "uwsgi --master --http :5000 --wsgi-file wsgi.py --callable app --pythonpath src --processes 4 --threads 2 --buffer-size 32768"
 db-init = "python init_db.py"
